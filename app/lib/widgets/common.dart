@@ -100,6 +100,9 @@ class ArtThumb extends StatelessWidget {
                 width: width,
                 height: height,
                 fit: BoxFit.contain,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.low,
+                cacheWidth: width.isFinite ? (width * 2).round() : 320,
                 errorBuilder: (_, __, ___) => Text(
                   label,
                   style: TextStyle(

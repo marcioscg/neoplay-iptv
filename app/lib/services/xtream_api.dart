@@ -10,6 +10,7 @@ class XtreamApi {
   XtreamApi(this.playlist);
 
   static const _timeout = Duration(seconds: 25);
+  static const _bigTimeout = Duration(seconds: 90);
 
   Uri _api(String action, [Map<String, String> extra = const {}]) {
     return Uri.parse('${playlist.normalizedHost}/player_api.php').replace(
@@ -64,32 +65,39 @@ class XtreamApi {
     );
   }
 
-  /// Baixa canais ao vivo e filmes com suas categorias.
-  Future<PlaylistContent> loadContent() async {
-    final liveCats = await _categories('get_live_categories');
-    final vodCats = await _categories('get_vod_categories');
-
-    final live = await _streams(
-      action: 'get_live_streams',
-      categories: liveCats,
-      kind: MediaKind.live,
-    );
-    final movies = await _streams(
-      action: 'get_vod_streams',
-      categories: vodCats,
-      kind: MediaKind.movie,
-    );
-    return PlaylistContent(live: live, movies: movies);
+  /// Baixa o corpo bruto de uma ação (JSON não decodificado).
+  ///
+  /// O decode e o mapeamento acontecem em outro isolate (ver importer.dart),
+  /// por isso aqui devolvemos apenas texto.
+  Future<String> rawBody(String action, {bool optional = false}) async {
+    try {
+      final res = await http.get(_api(action), headers: const {
+        'User-Agent': 'NEOPLAY/1.0 (Android)',
+        'Accept-Encoding': 'gzip',
+      }).timeout(_bigTimeout);
+      if (res.statusCode != 200) {
+        if (optional) return '';
+        throw XtreamException('Servidor respondeu ${res.statusCode}');
+      }
+      return utf8.decode(res.bodyBytes, allowMalformed: true);
+    } on XtreamException {
+      if (optional) return '';
+      rethrow;
+    } on Exception {
+      if (optional) return '';
+      rethrow;
+    }
   }
 
-  Future<Map<String, String>> _categories(String action) async {
+  /// Mapa categoria_id -> nome da categoria.
+  Future<Map<String, String>> categories(String action) async {
     try {
       final data = await _get(_api(action));
       final map = <String, String>{};
       if (data is List) {
         for (final c in data) {
           if (c is Map) {
-            map['${c['category_id']}'] = '${c['category_name']}';
+            map['${c['category_id']}'] = '${c['category_name']}'.trim();
           }
         }
       }
@@ -97,38 +105,6 @@ class XtreamApi {
     } on Exception {
       return <String, String>{};
     }
-  }
-
-  Future<List<MediaItem>> _streams({
-    required String action,
-    required Map<String, String> categories,
-    required MediaKind kind,
-  }) async {
-    late final dynamic data;
-    try {
-      data = await _get(_api(action));
-    } on Exception {
-      return const [];
-    }
-    if (data is! List) return const [];
-
-    final out = <MediaItem>[];
-    for (final s in data) {
-      if (s is! Map) continue;
-      final id = '${s['stream_id']}';
-      if (id.isEmpty || id == 'null') continue;
-      final ext = '${s['container_extension'] ?? 'mp4'}';
-      out.add(MediaItem(
-        id: id,
-        name: '${s['name'] ?? 'Sem nome'}',
-        url: kind == MediaKind.live ? liveUrl(id) : movieUrl(id, ext),
-        logo: '${s['stream_icon'] ?? ''}',
-        group: categories['${s['category_id']}'] ?? 'Sem categoria',
-        tvgId: '${s['epg_channel_id'] ?? ''}',
-        kind: kind,
-      ));
-    }
-    return out;
   }
 
   /// URL de stream ao vivo. `.m3u8` é o formato mais compatível com ExoPlayer.

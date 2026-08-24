@@ -1,6 +1,6 @@
 name: Build APK
 
-# Gera o APK automaticamente a cada push na main e sob demanda.
+# Gera o APK a cada push na main e sob demanda.
 # O arquivo fica em Actions > (execução) > Artifacts > neoplay-apk.
 on:
   push:
@@ -36,24 +36,54 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Restaurar a chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Sem segredos de assinatura: o APK sairá assinado com a chave de debug."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/neoplay-release.jks
+          cat > android/key.properties <<EOF
+          storeFile=neoplay-release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+
       - name: Baixar dependências
         run: flutter pub get
 
       - name: Análise estática
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Compilar APK (release, assinado com a chave de debug)
+      - name: Testes
+        run: flutter test
+
+      - name: Compilar APK universal (release)
         run: flutter build apk --release
 
       - name: Compilar APKs por arquitetura
         run: flutter build apk --release --split-per-abi
+
+      - name: Conferir a assinatura
+        run: |
+          "$JAVA_HOME/bin/keytool" -printcert -jarfile \
+            build/app/outputs/flutter-apk/app-release.apk | head -20
+
+      - name: Limpar segredos do runner
+        if: always()
+        run: rm -f android/key.properties android/app/neoplay-release.jks
 
       - name: Publicar artefatos
         uses: actions/upload-artifact@v4
         with:
           name: neoplay-apk
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 60
           path: |
             app/build/app/outputs/flutter-apk/app-release.apk
             app/build/app/outputs/flutter-apk/app-*-release.apk

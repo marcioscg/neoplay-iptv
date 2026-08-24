@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
-import '../services/m3u_parser.dart';
+import '../services/importer.dart';
 import '../services/storage.dart';
 import '../services/xtream_api.dart';
 
@@ -12,7 +13,10 @@ enum LoadStage { idle, loading, ready, error }
 
 /// Estado global do app: lista ativa, conteúdo importado, favoritos e busca.
 ///
-/// Em um projeto maior, trocar por Riverpod conforme a especificação técnica.
+/// Todo o trabalho pesado (parse, serialização, leitura de cache) é delegado
+/// ao importer, que roda em isolate. Aqui só ficam dados já prontos e índices
+/// pré-calculados, para que nenhuma tela precise varrer milhares de itens a
+/// cada frame.
 class AppState extends ChangeNotifier {
   AppState(this._storage);
 
@@ -29,17 +33,35 @@ class AppState extends ChangeNotifier {
   XtreamAccount? account;
   DateTime? updatedAt;
 
-  bool get hasPlaylist => playlist != null;
+  // Índices derivados, recalculados uma única vez por importação.
+  List<MediaItem> _all = const [];
+  List<MediaCategory> _liveCategories = const [];
+  List<MediaCategory> _movieCategories = const [];
+  Map<String, MediaItem> _byId = const {};
+  Map<String, List<MediaItem>> _liveByGroup = const {};
+  Map<String, List<MediaItem>> _movieByGroup = const {};
+  List<String> _recentIds = const [];
 
-  /// Carrega a lista salva e o cache local, sem rede.
+  bool _busy = false;
+  bool _booted = false;
+
+  bool get hasPlaylist => playlist != null;
+  bool get isBusy => _busy;
+
+  /// Carrega a lista salva e o cache local, sem rede. Só roda uma vez.
   Future<void> bootstrap() async {
+    if (_booted) return;
+    _booted = true;
+
     playlist = _storage.playlist;
     favorites = _storage.favorites;
+    _recentIds = _storage.recent.toList();
     updatedAt = _storage.cachedAt;
-    final cached = _storage.cachedContent;
+    notifyListeners();
+
+    final cached = await _storage.loadCachedContent();
     if (cached != null) {
-      live = cached.live;
-      movies = cached.movies;
+      _apply(cached);
       stage = LoadStage.ready;
     }
     notifyListeners();
@@ -55,135 +77,209 @@ class AppState extends ChangeNotifier {
   /// Reimporta o conteúdo da lista ativa.
   Future<bool> refresh() async {
     final p = playlist;
-    if (p == null) return false;
+    if (p == null || _busy) return false;
 
+    _busy = true;
     stage = LoadStage.loading;
     error = null;
-    progressLabel = 'Conectando ao servidor…';
-    notifyListeners();
+    _progress('Conectando ao servidor…');
 
     try {
-      PlaylistContent content;
-      if (p.kind == PlaylistKind.xtream) {
-        final api = XtreamApi(p);
-        account = await api.authenticate();
-        progressLabel = 'Baixando canais e filmes…';
-        notifyListeners();
-        content = await api.loadContent();
-      } else {
-        progressLabel = 'Baixando a lista M3U…';
-        notifyListeners();
-        content = await _loadM3u(p.url);
+      final result = p.kind == PlaylistKind.xtream
+          ? await _importXtream(p)
+          : await _importM3u(p);
+
+      if (result.content.isEmpty) {
+        throw const XtreamException(
+          'A lista respondeu, mas não veio nenhum canal ou filme',
+        );
       }
 
-      if (content.isEmpty) {
-        throw const XtreamException('A lista foi carregada, mas está vazia');
-      }
-
-      live = content.live;
-      movies = content.movies;
-      await _storage.saveContent(content);
+      _progress('Organizando o conteúdo…');
+      _apply(result.content);
       updatedAt = DateTime.now();
       stage = LoadStage.ready;
       progressLabel = '';
+      _busy = false;
       notifyListeners();
+
+      // Grava o cache depois de liberar a tela: o usuário já pode navegar.
+      await _storage.writeCache(result.cacheJson);
       return true;
     } on TimeoutException {
-      return _fail('O servidor não respondeu. Verifique a conexão.');
+      return _fail('O servidor não respondeu em tempo. Tente novamente.');
     } on XtreamException catch (e) {
       return _fail(e.message);
     } on Exception catch (e) {
-      return _fail('Falha ao carregar a lista: $e');
+      return _fail('Falha ao carregar a lista: ${_short(e)}');
     }
+  }
+
+  Future<ImportResult> _importXtream(Playlist p) async {
+    final api = XtreamApi(p);
+    account = await api.authenticate();
+
+    _progress('Lendo as categorias…');
+    final liveCats = await api.categories('get_live_categories');
+    final vodCats = await api.categories('get_vod_categories');
+
+    _progress('Baixando os canais ao vivo…');
+    final liveBody = await api.rawBody('get_live_streams');
+
+    _progress('Baixando os filmes…');
+    final vodBody = await api.rawBody('get_vod_streams', optional: true);
+
+    _progress('Processando a lista…');
+    return importXtream(
+      XtreamJob(
+        liveBody: liveBody,
+        vodBody: vodBody,
+        liveCategories: liveCats,
+        vodCategories: vodCats,
+        host: p.normalizedHost,
+        username: p.username,
+        password: p.password,
+      ),
+    );
+  }
+
+  Future<ImportResult> _importM3u(Playlist p) async {
+    _progress('Baixando a lista M3U…');
+    final res = await http.get(Uri.parse(p.url), headers: const {
+      'User-Agent': 'NEOPLAY/1.0 (Android)',
+      'Accept-Encoding': 'gzip',
+    }).timeout(const Duration(seconds: 90));
+
+    if (res.statusCode != 200) {
+      throw XtreamException('A URL respondeu ${res.statusCode}');
+    }
+    _progress('Processando a lista…');
+    return importM3u(utf8.decode(res.bodyBytes, allowMalformed: true));
+  }
+
+  void _progress(String label) {
+    progressLabel = label;
+    notifyListeners();
   }
 
   bool _fail(String message) {
     error = message;
-    stage = live.isEmpty && movies.isEmpty ? LoadStage.error : LoadStage.ready;
+    stage = _all.isEmpty ? LoadStage.error : LoadStage.ready;
     progressLabel = '';
+    _busy = false;
     notifyListeners();
     return false;
   }
 
-  Future<PlaylistContent> _loadM3u(String url) async {
-    final res = await http.get(Uri.parse(url), headers: const {
-      'User-Agent': 'NEOPLAY/1.0 (Android)'
-    }).timeout(const Duration(seconds: 40));
-    if (res.statusCode != 200) {
-      throw XtreamException('A URL respondeu ${res.statusCode}');
-    }
-    final items = M3uParser.parse(res.body);
-    return PlaylistContent(
-      live: items.where((e) => e.kind == MediaKind.live).toList(),
-      movies: items.where((e) => e.kind != MediaKind.live).toList(),
-    );
+  static String _short(Object e) {
+    final text = '$e'.replaceAll('Exception:', '').trim();
+    return text.length > 120 ? '${text.substring(0, 120)}…' : text;
   }
 
-  // ---------- consultas ----------
-  List<MediaCategory> get liveCategories => _categoriesOf(live);
-  List<MediaCategory> get movieCategories => _categoriesOf(movies);
+  /// Recalcula todos os índices a partir do conteúdo importado.
+  void _apply(PlaylistContent content) {
+    live = content.live;
+    movies = content.movies;
+    _all = [...live, ...movies];
 
-  List<MediaCategory> _categoriesOf(List<MediaItem> items) {
-    final counts = <String, int>{};
-    for (final i in items) {
-      counts[i.group] = (counts[i.group] ?? 0) + 1;
+    _byId = {for (final e in _all) e.id: e};
+    _liveByGroup = _group(live);
+    _movieByGroup = _group(movies);
+    _liveCategories = _categories(_liveByGroup);
+    _movieCategories = _categories(_movieByGroup);
+    _recentIds = _recentIds.where(_byId.containsKey).toList();
+  }
+
+  Map<String, List<MediaItem>> _group(List<MediaItem> items) {
+    final map = <String, List<MediaItem>>{};
+    for (final item in items) {
+      (map[item.group] ??= <MediaItem>[]).add(item);
     }
-    final list = counts.entries
-        .map((e) => MediaCategory(e.key, e.value))
+    return map;
+  }
+
+  List<MediaCategory> _categories(Map<String, List<MediaItem>> groups) {
+    final list = groups.entries
+        .map((e) => MediaCategory(e.key, e.value.length))
         .toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return list;
   }
 
-  List<MediaItem> inCategory(List<MediaItem> items, String category) =>
-      items.where((e) => e.group == category).toList();
+  // ---------- consultas (todas O(1) ou sobre listas já prontas) ----------
+  List<MediaCategory> get liveCategories => _liveCategories;
+  List<MediaCategory> get movieCategories => _movieCategories;
+  List<MediaItem> get allItems => _all;
 
-  List<MediaItem> get allItems => [...live, ...movies];
+  List<MediaItem> inCategory(List<MediaItem> items, String category) {
+    final source = items == live ? _liveByGroup : _movieByGroup;
+    final hit = source[category];
+    if (hit != null) return hit;
+    return items.where((e) => e.group == category).toList();
+  }
 
   List<MediaItem> get favoriteItems {
-    final ids = favorites;
-    return allItems.where((e) => ids.contains(e.id)).toList();
+    if (favorites.isEmpty) return const [];
+    return [
+      for (final id in favorites)
+        if (_byId[id] != null) _byId[id]!,
+    ];
   }
 
-  List<MediaItem> get recentItems {
-    final byId = {for (final e in allItems) e.id: e};
-    return _storage.recent
-        .map((id) => byId[id])
-        .whereType<MediaItem>()
-        .toList();
-  }
+  List<MediaItem> get recentItems => [
+        for (final id in _recentIds)
+          if (_byId[id] != null) _byId[id]!,
+      ];
 
   List<MediaItem> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.length < 2) return const [];
-    return allItems
-        .where((e) => e.name.toLowerCase().contains(q))
-        .take(200)
-        .toList();
+    final out = <MediaItem>[];
+    for (final item in _all) {
+      if (item.name.toLowerCase().contains(q)) {
+        out.add(item);
+        if (out.length >= 300) break;
+      }
+    }
+    return out;
   }
 
   bool isFavorite(MediaItem item) => favorites.contains(item.id);
 
   Future<void> toggleFavorite(MediaItem item) async {
-    if (!favorites.remove(item.id)) favorites.add(item.id);
-    favorites = {...favorites};
-    await _storage.saveFavorites(favorites);
+    final next = favorites.toSet();
+    if (!next.remove(item.id)) next.add(item.id);
+    favorites = next;
     notifyListeners();
+    await _storage.saveFavorites(next);
   }
 
   Future<void> markWatched(MediaItem item) async {
-    await _storage.pushRecent(item.id);
+    final list = _recentIds.toList()..remove(item.id);
+    list.insert(0, item.id);
+    if (list.length > 30) list.removeRange(30, list.length);
+    _recentIds = list;
     notifyListeners();
+    await _storage.saveRecent(list);
+  }
+
+  Future<void> clearFavoritesAndHistory() async {
+    favorites = <String>{};
+    _recentIds = const [];
+    notifyListeners();
+    await _storage.saveFavorites(const <String>{});
+    await _storage.saveRecent(const []);
   }
 
   Future<void> resetEverything() async {
     await _storage.clearAll();
     playlist = null;
-    live = const [];
-    movies = const [];
-    favorites = <String>{};
     account = null;
     updatedAt = null;
+    error = null;
+    favorites = <String>{};
+    _recentIds = const [];
+    _apply(const PlaylistContent());
     stage = LoadStage.idle;
     notifyListeners();
   }

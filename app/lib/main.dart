@@ -14,6 +14,11 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
+  // Listas trazem milhares de logos remotos: limitar o cache evita estouro de
+  // memória e travadas ao rolar as grades.
+  PaintingBinding.instance.imageCache.maximumSize = 220;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+
   final storage = await Storage.open();
   runApp(NeoplayApp(storage: storage));
 }
@@ -26,7 +31,7 @@ class NeoplayApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => AppState(storage)..bootstrap(),
+      create: (_) => AppState(storage),
       child: MaterialApp(
         title: 'NEOPLAY',
         debugShowCheckedModeBanner: false,

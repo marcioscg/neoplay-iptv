@@ -1,26 +1,52 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
+import 'importer.dart';
 
-/// Persistência local simples (SharedPreferences).
+/// Persistência local.
 ///
-/// Para produção com listas grandes, trocar o cache de itens por um banco
-/// local (Isar/Drift) conforme a especificação em docs/.
+/// Preferências (lista ativa, favoritos, histórico) ficam em SharedPreferences,
+/// que é rápido para valores pequenos. O conteúdo da lista — que pode passar de
+/// 10 MB — vai para um arquivo JSON no diretório de suporte do app. Gravar isso
+/// em SharedPreferences travava a interface por vários segundos.
 class Storage {
   static const _kPlaylist = 'playlist';
   static const _kFavorites = 'favorites';
   static const _kRecent = 'recent';
-  static const _kCacheLive = 'cache_live';
-  static const _kCacheMovies = 'cache_movies';
   static const _kCacheAt = 'cache_at';
 
-  final SharedPreferences _p;
-  Storage(this._p);
+  // Chaves da versão 1.0.0, removidas na migração.
+  static const _kLegacyLive = 'cache_live';
+  static const _kLegacyMovies = 'cache_movies';
 
-  static Future<Storage> open() async =>
-      Storage(await SharedPreferences.getInstance());
+  final SharedPreferences _p;
+  final File _cacheFile;
+
+  Storage(this._p, this._cacheFile);
+
+  static Future<Storage> open() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    Directory dir;
+    try {
+      dir = await getApplicationSupportDirectory();
+    } on Exception {
+      dir = Directory.systemTemp;
+    }
+
+    // Migração: apaga o cache antigo salvo em SharedPreferences.
+    if (prefs.containsKey(_kLegacyLive) || prefs.containsKey(_kLegacyMovies)) {
+      await prefs.remove(_kLegacyLive);
+      await prefs.remove(_kLegacyMovies);
+      await prefs.remove(_kCacheAt);
+    }
+
+    return Storage(prefs, File('${dir.path}/neoplay_cache.json'));
+  }
 
   // ---------- lista de reprodução ----------
   Playlist? get playlist {
@@ -37,38 +63,33 @@ class Storage {
       _p.setString(_kPlaylist, jsonEncode(playlist.toJson()));
 
   // ---------- cache de conteúdo ----------
-  Future<void> saveContent(PlaylistContent content) async {
-    await _p.setString(
-        _kCacheLive, jsonEncode(content.live.map((e) => e.toJson()).toList()));
-    await _p.setString(_kCacheMovies,
-        jsonEncode(content.movies.map((e) => e.toJson()).toList()));
-    await _p.setInt(_kCacheAt, DateTime.now().millisecondsSinceEpoch);
+
+  /// Grava o JSON já serializado pelo isolate de importação.
+  Future<void> writeCache(String json) async {
+    try {
+      await _cacheFile.writeAsString(json, flush: true);
+      await _p.setInt(_kCacheAt, DateTime.now().millisecondsSinceEpoch);
+    } on Exception {
+      // Sem espaço em disco ou permissão: o app segue funcionando em memória.
+    }
   }
 
-  PlaylistContent? get cachedContent {
-    final live = _decodeItems(_p.getString(_kCacheLive));
-    final movies = _decodeItems(_p.getString(_kCacheMovies));
-    if (live.isEmpty && movies.isEmpty) return null;
-    return PlaylistContent(live: live, movies: movies);
+  /// Lê e decodifica o cache fora da thread da interface.
+  Future<PlaylistContent?> loadCachedContent() async {
+    try {
+      if (!await _cacheFile.exists()) return null;
+      final raw = await _cacheFile.readAsString();
+      if (raw.trim().isEmpty) return null;
+      final content = await decodeCache(raw);
+      return content.isEmpty ? null : content;
+    } on Exception {
+      return null;
+    }
   }
 
   DateTime? get cachedAt {
     final ms = _p.getInt(_kCacheAt);
     return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
-  }
-
-  List<MediaItem> _decodeItems(String? raw) {
-    if (raw == null || raw.isEmpty) return const [];
-    try {
-      final list = jsonDecode(raw);
-      if (list is! List) return const [];
-      return list
-          .whereType<Map>()
-          .map((e) => MediaItem.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-    } on Exception {
-      return const [];
-    }
   }
 
   // ---------- favoritos e histórico ----------
@@ -80,12 +101,14 @@ class Storage {
 
   List<String> get recent => _p.getStringList(_kRecent) ?? const [];
 
-  Future<void> pushRecent(String id) async {
-    final list = recent.toList()..remove(id);
-    list.insert(0, id);
-    if (list.length > 30) list.removeRange(30, list.length);
-    await _p.setStringList(_kRecent, list);
-  }
+  Future<void> saveRecent(List<String> ids) => _p.setStringList(_kRecent, ids);
 
-  Future<void> clearAll() => _p.clear();
+  Future<void> clearAll() async {
+    await _p.clear();
+    try {
+      if (await _cacheFile.exists()) await _cacheFile.delete();
+    } on Exception {
+      // Ignora falha ao apagar o arquivo de cache.
+    }
+  }
 }
