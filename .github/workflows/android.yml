@@ -1,0 +1,59 @@
+name: Build APK
+
+# Gera o APK automaticamente a cada push na main e sob demanda.
+# O arquivo fica em Actions > (execução) > Artifacts > neoplay-apk.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilar APK de release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Baixar dependências
+        run: flutter pub get
+
+      - name: Análise estática
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Compilar APK (release, assinado com a chave de debug)
+        run: flutter build apk --release
+
+      - name: Compilar APKs por arquitetura
+        run: flutter build apk --release --split-per-abi
+
+      - name: Publicar artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: neoplay-apk
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            app/build/app/outputs/flutter-apk/app-release.apk
+            app/build/app/outputs/flutter-apk/app-*-release.apk
