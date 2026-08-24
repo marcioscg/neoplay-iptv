@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neoplay/models/models.dart';
+import 'package:neoplay/services/cast_service.dart';
 import 'package:neoplay/services/importer.dart';
 
 void main() {
@@ -108,5 +109,113 @@ http://servidor.com/movie/u/p/9.mp4
       ),
     );
     expect(result.content.isEmpty, isTrue);
+  });
+
+  test('importa séries do Xtream como containers sem URL', () async {
+    final seriesBody = jsonEncode([
+      {
+        'series_id': 55,
+        'name': 'Round 6',
+        'cover': 'http://x/cover.jpg',
+        'category_id': '7',
+      },
+      {'series_id': 55, 'name': 'Duplicada', 'category_id': '7'},
+    ]);
+
+    final result = await importXtream(
+      XtreamJob(
+        liveBody: '[]',
+        vodBody: '[]',
+        seriesBody: seriesBody,
+        liveCategories: const {},
+        vodCategories: const {},
+        seriesCategories: const {'7': 'SÉRIES | NETFLIX'},
+        host: 'http://servidor.com',
+        username: 'u',
+        password: 'p',
+      ),
+    );
+
+    expect(result.content.series.length, 1);
+    final serie = result.content.series.first;
+    expect(serie.id, 'series_55');
+    expect(serie.name, 'Round 6');
+    expect(serie.group, 'SÉRIES | NETFLIX');
+    expect(serie.url, isEmpty);
+    expect(serie.isSeriesContainer, isTrue);
+    expect(serie.remoteId, '55');
+  });
+
+  test('M3U com /series/ cai na aba de séries', () async {
+    const body = '''
+#EXTM3U
+#EXTINF:-1 group-title="SERIES | HBO",The Last of Us S01E01
+http://servidor.com/series/u/p/500.mp4
+''';
+    final result = await importM3u(body);
+    expect(result.content.series.length, 1);
+    expect(result.content.movies, isEmpty);
+    expect(result.content.series.first.kind, MediaKind.series);
+  });
+
+  test('cache guarda e restaura as séries', () async {
+    final result = await importXtream(
+      XtreamJob(
+        liveBody: '[]',
+        vodBody: '[]',
+        seriesBody: jsonEncode([
+          {'series_id': 1, 'name': 'Chaves', 'category_id': '2'},
+        ]),
+        liveCategories: const {},
+        vodCategories: const {},
+        seriesCategories: const {'2': 'CLÁSSICOS'},
+        host: 'http://servidor.com',
+        username: 'u',
+        password: 'p',
+      ),
+    );
+    final restored = await decodeCache(result.cacheJson);
+    expect(restored.series.length, 1);
+    expect(restored.series.first.name, 'Chaves');
+  });
+
+  test('monta URL de episódio com a extensão do servidor', () {
+    expect(
+      episodeStreamUrl('http://s.com', 'u', 'p', '900', 'mkv'),
+      'http://s.com/series/u/p/900.mkv',
+    );
+    expect(
+      episodeStreamUrl('http://s.com', 'u', 'p', '900', ''),
+      'http://s.com/series/u/p/900.mp4',
+    );
+  });
+
+  test('rótulo do episódio e conversão para item tocável', () {
+    const ep = SeriesEpisode(
+      id: '77',
+      title: 'Piloto',
+      url: 'http://s.com/series/u/p/77.mp4',
+      season: 2,
+      number: 3,
+    );
+    expect(ep.label, 'S02E03');
+    final item = ep.toMediaItem('Minha Série');
+    expect(item.id, 'ep_77');
+    expect(item.kind, MediaKind.series);
+    expect(item.group, 'Minha Série');
+    expect(item.isSeriesContainer, isFalse);
+  });
+
+  test('content-type do Cast segue o formato do stream', () {
+    expect(
+      CastService.contentTypeFor('http://s.com/live/u/p/1.m3u8'),
+      'application/x-mpegurl',
+    );
+    expect(
+      CastService.contentTypeFor('http://s.com/movie/u/p/1.mp4'),
+      'video/mp4',
+    );
+    expect(CastService.isRiskyFormat('http://s.com/a/b.mkv'), isTrue);
+    expect(CastService.isRiskyFormat('http://s.com/a/b.mp4'), isFalse);
   });
 }

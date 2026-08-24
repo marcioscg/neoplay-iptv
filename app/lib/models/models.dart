@@ -78,6 +78,15 @@ class MediaItem {
     this.kind = MediaKind.live,
   });
 
+  /// Série do Xtream: não tem URL própria, precisa abrir para ver episódios.
+  bool get isSeriesContainer => kind == MediaKind.series && url.isEmpty;
+
+  /// ID numérico usado nas chamadas da API (sem os prefixos internos).
+  String get remoteId {
+    final i = id.indexOf('_');
+    return i < 0 ? id : id.substring(i + 1);
+  }
+
   Map<String, dynamic> toJson() => {
         'i': id,
         'n': name,
@@ -113,7 +122,82 @@ class MediaCategory {
 class PlaylistContent {
   final List<MediaItem> live;
   final List<MediaItem> movies;
-  const PlaylistContent({this.live = const [], this.movies = const []});
 
-  bool get isEmpty => live.isEmpty && movies.isEmpty;
+  /// Em listas Xtream, cada item é uma série (container que precisa ser aberto
+  /// para listar temporadas). Em listas M3U, são os episódios já prontos.
+  final List<MediaItem> series;
+
+  const PlaylistContent({
+    this.live = const [],
+    this.movies = const [],
+    this.series = const [],
+  });
+
+  bool get isEmpty => live.isEmpty && movies.isEmpty && series.isEmpty;
+}
+
+/// Episódio de uma série (Xtream: get_series_info).
+class SeriesEpisode {
+  final String id;
+  final String title;
+  final String url;
+  final String image;
+  final String plot;
+  final int season;
+  final int number;
+  final Duration? duration;
+
+  const SeriesEpisode({
+    required this.id,
+    required this.title,
+    required this.url,
+    this.image = '',
+    this.plot = '',
+    this.season = 1,
+    this.number = 1,
+    this.duration,
+  });
+
+  /// Rótulo curto usado nas listas: S01E03.
+  String get label =>
+      'S${season.toString().padLeft(2, '0')}E${number.toString().padLeft(2, '0')}';
+
+  /// Converte para item reproduzível, reaproveitando o player.
+  MediaItem toMediaItem(String seriesName) => MediaItem(
+        id: 'ep_$id',
+        name: '$label · $title',
+        url: url,
+        logo: image,
+        group: seriesName,
+        kind: MediaKind.series,
+      );
+}
+
+/// Temporada com seus episódios.
+class SeriesSeason {
+  final int number;
+  final List<SeriesEpisode> episodes;
+  const SeriesSeason(this.number, this.episodes);
+}
+
+/// Detalhe de uma série carregado sob demanda.
+class SeriesDetail {
+  final String plot;
+  final String cover;
+  final String genre;
+  final String rating;
+  final String releaseDate;
+  final List<SeriesSeason> seasons;
+
+  const SeriesDetail({
+    this.plot = '',
+    this.cover = '',
+    this.genre = '',
+    this.rating = '',
+    this.releaseDate = '',
+    this.seasons = const [],
+  });
+
+  int get episodeCount =>
+      seasons.fold<int>(0, (sum, s) => sum + s.episodes.length);
 }

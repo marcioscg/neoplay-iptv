@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../state/app_state.dart';
 import '../widgets/common.dart';
 import 'player_screen.dart';
+import 'series_screen.dart';
 
 /// Telas 06 e 09 — lista de canais / grid de filmes de uma categoria.
 class ItemsScreen extends StatefulWidget {
@@ -140,8 +141,17 @@ class _MediaGrid extends StatelessWidget {
 }
 
 /// Abre o player mantendo a lista para permitir zapear.
+///
+/// Séries do Xtream não têm URL própria: nesse caso abrimos a tela de
+/// temporadas em vez do player.
 void openPlayer(BuildContext context, MediaItem item,
     {List<MediaItem> playlist = const []}) {
+  if (item.isSeriesContainer) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => SeriesDetailScreen(series: item)),
+    );
+    return;
+  }
   context.read<AppState>().markWatched(item);
   Navigator.of(context).push(
     MaterialPageRoute<void>(

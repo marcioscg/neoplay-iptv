@@ -24,8 +24,10 @@ class ImportResult {
 class XtreamJob {
   final String liveBody;
   final String vodBody;
+  final String seriesBody;
   final Map<String, String> liveCategories;
   final Map<String, String> vodCategories;
+  final Map<String, String> seriesCategories;
   final String host;
   final String username;
   final String password;
@@ -33,8 +35,10 @@ class XtreamJob {
   const XtreamJob({
     required this.liveBody,
     required this.vodBody,
+    this.seriesBody = '',
     required this.liveCategories,
     required this.vodCategories,
+    this.seriesCategories = const {},
     required this.host,
     required this.username,
     required this.password,
@@ -54,6 +58,16 @@ Future<PlaylistContent> decodeCache(String raw) => compute(_cacheWorker, raw);
 String liveStreamUrl(String host, String user, String pass, String id) =>
     '$host/live/$user/$pass/$id.m3u8';
 
+/// Monta a URL de episódio de série.
+String episodeStreamUrl(
+  String host,
+  String user,
+  String pass,
+  String id,
+  String ext,
+) =>
+    '$host/series/$user/$pass/$id.${ext.isEmpty ? 'mp4' : ext}';
+
 /// Monta a URL de filme (usada também dentro do isolate).
 String movieStreamUrl(
   String host,
@@ -72,14 +86,18 @@ ImportResult _m3uWorker(String body) {
   final items = M3uParser.parse(body);
   final live = <MediaItem>[];
   final movies = <MediaItem>[];
+  final series = <MediaItem>[];
   for (final item in items) {
-    if (item.kind == MediaKind.live) {
-      live.add(item);
-    } else {
-      movies.add(item);
+    switch (item.kind) {
+      case MediaKind.live:
+        live.add(item);
+      case MediaKind.movie:
+        movies.add(item);
+      case MediaKind.series:
+        series.add(item);
     }
   }
-  return _pack(live, movies);
+  return _pack(live, movies, series);
 }
 
 ImportResult _xtreamWorker(XtreamJob job) {
@@ -95,7 +113,41 @@ ImportResult _xtreamWorker(XtreamJob job) {
     kind: MediaKind.movie,
     job: job,
   );
-  return _pack(live, movies);
+  final series = _mapSeries(job.seriesBody, job.seriesCategories);
+  return _pack(live, movies, series);
+}
+
+/// Séries do Xtream vêm sem URL: o item é um container que, ao ser aberto,
+/// consulta get_series_info para listar temporadas e episódios.
+List<MediaItem> _mapSeries(String body, Map<String, String> categories) {
+  if (body.trim().isEmpty) return const [];
+
+  dynamic data;
+  try {
+    data = jsonDecode(body);
+  } on FormatException {
+    return const [];
+  }
+  if (data is! List) return const [];
+
+  final out = <MediaItem>[];
+  final seen = <String>{};
+  for (final entry in data) {
+    if (entry is! Map) continue;
+    final id = '${entry['series_id']}';
+    if (id.isEmpty || id == 'null' || !seen.add(id)) continue;
+    out.add(
+      MediaItem(
+        id: 'series_$id',
+        name: '${entry['name'] ?? 'Sem nome'}'.trim(),
+        url: '',
+        logo: '${entry['cover'] ?? ''}',
+        group: categories['${entry['category_id']}'] ?? 'Sem categoria',
+        kind: MediaKind.series,
+      ),
+    );
+  }
+  return out;
 }
 
 List<MediaItem> _mapStreams({
@@ -140,13 +192,21 @@ List<MediaItem> _mapStreams({
   return out;
 }
 
-ImportResult _pack(List<MediaItem> live, List<MediaItem> movies) {
+ImportResult _pack(
+  List<MediaItem> live,
+  List<MediaItem> movies, [
+  List<MediaItem> series = const [],
+]) {
   final json = jsonEncode({
-    'v': 1,
+    'v': 2,
     'live': [for (final e in live) e.toJson()],
     'movies': [for (final e in movies) e.toJson()],
+    'series': [for (final e in series) e.toJson()],
   });
-  return ImportResult(PlaylistContent(live: live, movies: movies), json);
+  return ImportResult(
+    PlaylistContent(live: live, movies: movies, series: series),
+    json,
+  );
 }
 
 PlaylistContent _cacheWorker(String raw) {
@@ -156,6 +216,7 @@ PlaylistContent _cacheWorker(String raw) {
     return PlaylistContent(
       live: _decodeItems(data['live']),
       movies: _decodeItems(data['movies']),
+      series: _decodeItems(data['series']),
     );
   } on FormatException {
     return const PlaylistContent();

@@ -63,11 +63,13 @@ jobs:
       - name: Testes
         run: flutter test
 
+      # Celulares, TV boxes e Fire Stick são ARM: deixar o x86 de fora evita
+      # falhas de build do SDK do Google Cast e reduz o tamanho do APK.
       - name: Compilar APK universal (release)
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Compilar APKs por arquitetura
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
 
       - name: Conferir a assinatura
         run: |

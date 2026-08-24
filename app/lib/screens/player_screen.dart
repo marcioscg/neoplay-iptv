@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/models.dart';
+import '../services/cast_service.dart';
 import '../services/xtream_api.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/cast_sheet.dart';
 import '../widgets/common.dart';
 
 /// Tela 07 — Player (ao vivo e VOD) com EPG do canal e zapeamento.
@@ -28,6 +30,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _fullscreen = false;
   String? _error;
   List<XtreamProgram> _epg = const [];
+  bool _casting = false;
 
   @override
   void initState() {
@@ -41,6 +44,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _controller?.dispose();
     _restoreOrientation();
     super.dispose();
+  }
+
+  /// Manda o conteúdo para a TV e pausa a reprodução no celular.
+  Future<void> _startCast() async {
+    final position = _controller?.value.position ?? Duration.zero;
+    await _controller?.pause();
+    if (!mounted) return;
+    final started = await showCastSheet(
+      context,
+      _current,
+      position: _current.kind == MediaKind.live ? Duration.zero : position,
+    );
+    if (!mounted) return;
+    setState(() => _casting = started);
+  }
+
+  Future<void> _stopCast() async {
+    await CastService.instance.disconnect();
+    if (!mounted) return;
+    setState(() => _casting = false);
+    await _controller?.play();
   }
 
   Future<void> _open(MediaItem item) async {
@@ -162,10 +186,45 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
 
+    if (_casting) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(_current.name, overflow: TextOverflow.ellipsis),
+          actions: [
+            IconButton(
+              tooltip: 'Parar transmissão',
+              icon: const Icon(Icons.cast_connected, color: AppColors.accent),
+              onPressed: _stopCast,
+            ),
+          ],
+        ),
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: CastPanel(
+                title: _current.name,
+                deviceName: CastService.instance.deviceName ?? 'sua TV',
+                onStop: _stopCast,
+              ),
+            ),
+            Expanded(child: _epgSection(_current.kind == MediaKind.live)),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(_current.name, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            tooltip: _casting ? 'Parar transmissão' : 'Enviar para TV',
+            icon: Icon(_casting ? Icons.cast_connected : Icons.cast),
+            color: _casting ? AppColors.accent : null,
+            onPressed: _casting ? _stopCast : _startCast,
+          ),
           IconButton(
             tooltip: 'Recarregar',
             icon: const Icon(Icons.refresh),

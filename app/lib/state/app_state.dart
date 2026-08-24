@@ -29,6 +29,7 @@ class AppState extends ChangeNotifier {
 
   List<MediaItem> live = const [];
   List<MediaItem> movies = const [];
+  List<MediaItem> series = const [];
   Set<String> favorites = <String>{};
   XtreamAccount? account;
   DateTime? updatedAt;
@@ -37,9 +38,11 @@ class AppState extends ChangeNotifier {
   List<MediaItem> _all = const [];
   List<MediaCategory> _liveCategories = const [];
   List<MediaCategory> _movieCategories = const [];
+  List<MediaCategory> _seriesCategories = const [];
   Map<String, MediaItem> _byId = const {};
   Map<String, List<MediaItem>> _liveByGroup = const {};
   Map<String, List<MediaItem>> _movieByGroup = const {};
+  Map<String, List<MediaItem>> _seriesByGroup = const {};
   List<String> _recentIds = const [];
 
   bool _busy = false;
@@ -129,13 +132,19 @@ class AppState extends ChangeNotifier {
     _progress('Baixando os filmes…');
     final vodBody = await api.rawBody('get_vod_streams', optional: true);
 
+    _progress('Baixando as séries…');
+    final seriesCats = await api.categories('get_series_categories');
+    final seriesBody = await api.rawBody('get_series', optional: true);
+
     _progress('Processando a lista…');
     return importXtream(
       XtreamJob(
         liveBody: liveBody,
         vodBody: vodBody,
+        seriesBody: seriesBody,
         liveCategories: liveCats,
         vodCategories: vodCats,
+        seriesCategories: seriesCats,
         host: p.normalizedHost,
         username: p.username,
         password: p.password,
@@ -180,13 +189,16 @@ class AppState extends ChangeNotifier {
   void _apply(PlaylistContent content) {
     live = content.live;
     movies = content.movies;
-    _all = [...live, ...movies];
+    series = content.series;
+    _all = [...live, ...movies, ...series];
 
     _byId = {for (final e in _all) e.id: e};
     _liveByGroup = _group(live);
     _movieByGroup = _group(movies);
+    _seriesByGroup = _group(series);
     _liveCategories = _categories(_liveByGroup);
     _movieCategories = _categories(_movieByGroup);
+    _seriesCategories = _categories(_seriesByGroup);
     _recentIds = _recentIds.where(_byId.containsKey).toList();
   }
 
@@ -209,10 +221,15 @@ class AppState extends ChangeNotifier {
   // ---------- consultas (todas O(1) ou sobre listas já prontas) ----------
   List<MediaCategory> get liveCategories => _liveCategories;
   List<MediaCategory> get movieCategories => _movieCategories;
+  List<MediaCategory> get seriesCategories => _seriesCategories;
   List<MediaItem> get allItems => _all;
 
   List<MediaItem> inCategory(List<MediaItem> items, String category) {
-    final source = items == live ? _liveByGroup : _movieByGroup;
+    final source = items == live
+        ? _liveByGroup
+        : items == series
+            ? _seriesByGroup
+            : _movieByGroup;
     final hit = source[category];
     if (hit != null) return hit;
     return items.where((e) => e.group == category).toList();
@@ -242,6 +259,27 @@ class AppState extends ChangeNotifier {
       }
     }
     return out;
+  }
+
+  final Map<String, SeriesDetail> _seriesCache = {};
+
+  /// Carrega temporadas e episódios sob demanda, guardando em memória.
+  Future<SeriesDetail> seriesDetail(MediaItem item) async {
+    final cached = _seriesCache[item.id];
+    if (cached != null) return cached;
+
+    final p = playlist;
+    if (p == null || p.kind != PlaylistKind.xtream) {
+      throw const XtreamException(
+        'Temporadas só estão disponíveis em listas Xtream Codes',
+      );
+    }
+    final detail = await XtreamApi(p).seriesInfo(item.remoteId);
+    if (detail.seasons.isEmpty) {
+      throw const XtreamException('Esta série não retornou episódios');
+    }
+    _seriesCache[item.id] = detail;
+    return detail;
   }
 
   bool isFavorite(MediaItem item) => favorites.contains(item.id);
@@ -279,6 +317,7 @@ class AppState extends ChangeNotifier {
     error = null;
     favorites = <String>{};
     _recentIds = const [];
+    _seriesCache.clear();
     _apply(const PlaylistContent());
     stage = LoadStage.idle;
     notifyListeners();

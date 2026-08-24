@@ -1,7 +1,7 @@
 name: neoplay
 description: Player de listas IPTV (M3U/M3U8 e Xtream Codes) com EPG, VOD e favoritos.
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_chrome_cast: ^1.3.1
   http: ^1.2.2
   path_provider: ^2.1.4
   provider: ^6.1.2

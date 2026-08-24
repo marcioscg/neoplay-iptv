@@ -72,7 +72,7 @@ class _SplashScreenState extends State<SplashScreen> {
             Positioned(
               bottom: 40,
               child: Text(
-                'v1.0.1',
+                'v1.0.2',
                 style: TextStyle(fontSize: 11, color: Color(0xFF4D5464)),
               ),
             ),

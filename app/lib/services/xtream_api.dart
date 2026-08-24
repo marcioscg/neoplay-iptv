@@ -107,6 +107,79 @@ class XtreamApi {
     }
   }
 
+  /// Temporadas e episódios de uma série (get_series_info).
+  Future<SeriesDetail> seriesInfo(String seriesId) async {
+    final data = await _get(_api('get_series_info', {'series_id': seriesId}));
+    if (data is! Map) {
+      throw const XtreamException('A série não retornou episódios');
+    }
+
+    final info = data['info'] is Map
+        ? Map<String, dynamic>.from(data['info'] as Map)
+        : <String, dynamic>{};
+
+    final seasons = <int, List<SeriesEpisode>>{};
+    final raw = data['episodes'];
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        final seasonNumber = int.tryParse('${entry.key}') ?? 1;
+        final list = entry.value;
+        if (list is! List) continue;
+        for (final e in list) {
+          if (e is! Map) continue;
+          final id = '${e['id'] ?? ''}';
+          if (id.isEmpty || id == 'null') continue;
+          final extra = e['info'] is Map
+              ? Map<String, dynamic>.from(e['info'] as Map)
+              : <String, dynamic>{};
+          (seasons[seasonNumber] ??= <SeriesEpisode>[]).add(
+            SeriesEpisode(
+              id: id,
+              title: '${e['title'] ?? 'Episódio'}'.trim(),
+              url: episodeUrl(id, '${e['container_extension'] ?? 'mp4'}'),
+              image: '${extra['movie_image'] ?? ''}',
+              plot: '${extra['plot'] ?? ''}',
+              season: seasonNumber,
+              number: int.tryParse('${e['episode_num']}') ?? 0,
+              duration: _parseDuration('${extra['duration'] ?? ''}'),
+            ),
+          );
+        }
+      }
+    }
+
+    final ordered = seasons.keys.toList()..sort();
+    return SeriesDetail(
+      plot: '${info['plot'] ?? ''}'.trim(),
+      cover: '${info['cover'] ?? ''}',
+      genre: '${info['genre'] ?? ''}'.trim(),
+      rating: '${info['rating'] ?? ''}'.trim(),
+      releaseDate:
+          '${info['releaseDate'] ?? info['release_date'] ?? ''}'.trim(),
+      seasons: [
+        for (final n in ordered)
+          SeriesSeason(
+            n,
+            seasons[n]!..sort((a, b) => a.number.compareTo(b.number)),
+          ),
+      ],
+    );
+  }
+
+  /// URL de episódio de série.
+  String episodeUrl(String episodeId, String ext) =>
+      '${playlist.normalizedHost}/series/${playlist.username}/${playlist.password}/$episodeId.${ext.isEmpty ? 'mp4' : ext}';
+
+  static Duration? _parseDuration(String value) {
+    final parts = value.split(':');
+    if (parts.length != 3) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    final sec = double.tryParse(parts[2]);
+    if (h == null || m == null || sec == null) return null;
+    return Duration(hours: h, minutes: m, seconds: sec.round());
+  }
+
   /// URL de stream ao vivo. `.m3u8` é o formato mais compatível com ExoPlayer.
   String liveUrl(String streamId) =>
       '${playlist.normalizedHost}/live/${playlist.username}/${playlist.password}/$streamId.m3u8';

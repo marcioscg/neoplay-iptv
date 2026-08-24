@@ -86,7 +86,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  'NEOPLAY · versão 1.0.1',
+                  'NEOPLAY · versão 1.0.2',
                   style: TextStyle(fontSize: 11.5, color: Color(0xFF5B6274)),
                 ),
                 SizedBox(height: 6),

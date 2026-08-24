@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/splash_screen.dart';
+import 'services/cast_service.dart';
 import 'services/storage.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
@@ -18,6 +19,9 @@ Future<void> main() async {
   // memória e travadas ao rolar as grades.
   PaintingBinding.instance.imageCache.maximumSize = 220;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+
+  // Cast é opcional: se o aparelho não suportar, o app segue normal.
+  await CastService.instance.init();
 
   final storage = await Storage.open();
   runApp(NeoplayApp(storage: storage));

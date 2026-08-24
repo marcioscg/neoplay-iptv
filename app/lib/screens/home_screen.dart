@@ -9,7 +9,7 @@ import 'items_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 
-/// Tela 05 — Home com abas Canais / Filmes / Favoritos.
+/// Tela 05 — Home com abas Canais / Filmes / Séries / Favoritos.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -18,7 +18,7 @@ class HomeScreen extends StatelessWidget {
     final state = context.watch<AppState>();
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const NeoLogo(),
@@ -49,6 +49,7 @@ class HomeScreen extends StatelessWidget {
             tabs: [
               Tab(text: 'Canais'),
               Tab(text: 'Filmes'),
+              Tab(text: 'Séries'),
               Tab(text: 'Favoritos'),
             ],
           ),
@@ -61,6 +62,7 @@ class HomeScreen extends StatelessWidget {
                 children: [
                   _ChannelsTab(state: state),
                   _MoviesTab(state: state),
+                  _SeriesTab(state: state),
                   _FavoritesTab(state: state),
                 ],
               ),
@@ -184,6 +186,50 @@ class _MoviesTab extends StatelessWidget {
               context,
               c.name,
               state.inCategory(state.movies, c.name),
+              grid: true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SeriesTab extends StatelessWidget {
+  const _SeriesTab({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state.series.isEmpty) {
+      return const EmptyState(
+        icon: Icons.live_tv_outlined,
+        title: 'Nenhuma série encontrada',
+        message:
+            'Esta lista não expõe séries. Em listas Xtream Codes as temporadas '
+            'e episódios aparecem aqui automaticamente.',
+      );
+    }
+    final cats = state.seriesCategories;
+
+    return ListView(
+      children: [
+        CategoryTile(
+          title: 'Todas as séries',
+          count: state.series.length,
+          icon: Icons.grid_view_rounded,
+          onTap: () =>
+              _open(context, 'Todas as séries', state.series, grid: true),
+        ),
+        const SectionLabel('Categorias'),
+        ...cats.map(
+          (c) => CategoryTile(
+            title: c.name,
+            count: c.count,
+            onTap: () => _open(
+              context,
+              c.name,
+              state.inCategory(state.series, c.name),
               grid: true,
             ),
           ),

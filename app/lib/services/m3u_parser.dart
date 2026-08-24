@@ -55,19 +55,25 @@ class M3uParser {
     return items;
   }
 
-  /// Heurística simples: arquivos de vídeo viram VOD, o resto é canal ao vivo.
+  /// Heurística: /series/ ou categoria de série viram episódios; arquivos de
+  /// vídeo viram filme; o resto é canal ao vivo.
   static MediaKind _guessKind(String url, String group) {
     final u = url.toLowerCase();
     final g = group.toLowerCase();
+
+    final looksSeries = u.contains('/series/') ||
+        g.contains('série') ||
+        g.contains('serie') ||
+        g.contains('novela') ||
+        g.contains('anime') ||
+        g.contains('temporada');
+    if (looksSeries) return MediaKind.series;
+
     final isFile = u.endsWith('.mp4') ||
         u.endsWith('.mkv') ||
         u.endsWith('.avi') ||
-        u.contains('/movie/') ||
-        u.contains('/series/');
-    final looksVod = g.contains('filme') ||
-        g.contains('movie') ||
-        g.contains('série') ||
-        g.contains('serie');
+        u.contains('/movie/');
+    final looksVod = g.contains('filme') || g.contains('movie');
     return (isFile || looksVod) ? MediaKind.movie : MediaKind.live;
   }
 }
