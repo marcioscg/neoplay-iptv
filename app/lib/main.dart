@@ -1,49 +1,45 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'services/storage.dart';
-import 'state/app_state.dart';
+
 import 'screens/auth_screen.dart';
 import 'screens/splash_screen.dart';
+import 'services/cast_service.dart';
+import 'services/storage.dart';
+import 'state/app_state.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
-  final prefs = await SharedPreferences.getInstance();
-  const secure = FlutterSecureStorage();
-  final storage = Storage(prefs, secure);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
 
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppState(storage)..bootstrap(),
-      child: const MiauNetApp(),
-    ),
-  );
+  PaintingBinding.instance.imageCache.maximumSize = 220;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+
+  await CastService.instance.init();
+
+  final storage = await Storage.open();
+  runApp(NeoplayApp(storage: storage));
 }
 
-class MiauNetApp extends StatelessWidget {
-  const MiauNetApp({super.key});
+class NeoplayApp extends StatelessWidget {
+  const NeoplayApp({super.key, required this.storage});
+
+  final Storage storage;
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'MIAUNET',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0D0E12),
-        primaryColor: Colors.redAccent,
-        colorScheme: const ColorScheme.dark(
-          primary: Colors.redAccent,
-          secondary: Colors.redAccent,
-        ),
+    return ChangeNotifierProvider(
+      create: (_) => AppState(storage),
+      child: MaterialApp(
+        title: 'MIAUNET',
+        debugShowCheckedModeBanner: false,
+        theme: buildTheme(),
+        home: const RootGate(),
       ),
-      home: const RootGate(),
     );
   }
 }
