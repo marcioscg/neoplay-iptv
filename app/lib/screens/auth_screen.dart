@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 class AuthScreen extends StatefulWidget {
   final VoidCallback onAuthenticated;
@@ -9,17 +9,17 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  final _pinController = TextEditingController();
+  final _pinCtrl = TextEditingController();
   final String _defaultPin = "1234";
   String? _error;
 
   void _verifyPin() {
-    if (_pinController.text == _defaultPin) {
+    if (_pinCtrl.text == _defaultPin) {
       widget.onAuthenticated();
     } else {
       setState(() {
         _error = "PIN incorreto!";
-        _pinController.clear();
+        _pinCtrl.clear();
       });
     }
   }
@@ -31,7 +31,7 @@ class _AuthScreenState extends State<AuthScreen> {
       body: Center(
         child: Container(
           width: 340,
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(28),
           decoration: BoxDecoration(
             color: const Color(0xFF1E1E1E),
             borderRadius: BorderRadius.circular(16),
@@ -40,25 +40,25 @@ class _AuthScreenState extends State<AuthScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.lock_outline, size: 54, color: Colors.redAccent),
+              const Icon(Icons.pets, size: 64, color: Colors.redAccent),
               const SizedBox(height: 16),
               const Text(
                 'MIAUNET',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Digite seu PIN de acesso',
+                'Digite seu PIN (Padrão: 1234)',
                 style: TextStyle(fontSize: 14, color: Colors.white60),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
               TextField(
-                controller: _pinController,
+                controller: _pinCtrl,
                 obscureText: true,
                 keyboardType: TextInputType.number,
                 maxLength: 4,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 24, letterSpacing: 12, color: Colors.white),
+                style: const TextStyle(fontSize: 26, letterSpacing: 14, color: Colors.white),
                 decoration: InputDecoration(
                   counterText: "",
                   errorText: _error,
