@@ -6,14 +6,14 @@ import 'state/app_state.dart';
 import 'screens/auth_screen.dart';
 import 'screens/splash_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  final storage = Storage();
+  final storage = await Storage.init();
   runApp(
     ChangeNotifierProvider(
       create: (_) => AppState(storage)..bootstrap(),
