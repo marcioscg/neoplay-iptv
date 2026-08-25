@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../theme.dart';
 
-/// Marca do app MIAUNET.
-class MiauLogo extends StatelessWidget {
-  const MiauLogo({super.key, this.size = 18});
+/// Marca do app.
+class NeoLogo extends StatelessWidget {
+  const NeoLogo({super.key, this.size = 18});
   final double size;
 
   @override
@@ -16,57 +16,41 @@ class MiauLogo extends StatelessWidget {
         Text.rich(
           TextSpan(children: [
             TextSpan(
-              text: 'MIAU',
+              text: 'NEO',
               style: TextStyle(
                 fontSize: size,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 letterSpacing: -0.2,
                 color: AppColors.text,
               ),
             ),
             TextSpan(
-              text: 'NET',
+              text: 'PLAY',
               style: TextStyle(
                 fontSize: size,
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 letterSpacing: -0.2,
                 color: AppColors.accent,
               ),
             ),
           ]),
         ),
-        SizedBox(width: size * 0.35),
+        SizedBox(width: size * 0.3),
         Container(
-          width: size * 1.1,
-          height: size * 1.1,
-          decoration: BoxDecoration(
+          width: size * 0.8,
+          height: size * 0.8,
+          decoration: const BoxDecoration(
             shape: BoxShape.circle,
-            gradient: const LinearGradient(
-              colors: [AppColors.accent, AppColors.accent2],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.accent.withValues(alpha: 0.35),
-                blurRadius: 6,
-                spreadRadius: 1,
-              ),
-            ],
+            gradient:
+                LinearGradient(colors: [AppColors.accent, AppColors.accent2]),
           ),
-          child: Icon(
-            Icons.pets,
-            size: size * 0.65,
-            color: const Color(0xFF141007),
-          ),
+          child: Icon(Icons.play_arrow_rounded,
+              size: size * 0.6, color: AppColors.bg),
         ),
       ],
     );
   }
 }
-
-/// Alias retrocompatível.
-typedef NeoLogo = MiauLogo;
 
 /// Miniatura de logo/capa com fallback em gradiente.
 class ArtThumb extends StatelessWidget {

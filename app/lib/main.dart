@@ -27,8 +27,8 @@ Future<void> main() async {
   runApp(NeoplayApp(storage: storage));
 }
 
-class MiauNetApp extends StatelessWidget {
-  const MiauNetApp({super.key, required this.storage});
+class NeoplayApp extends StatelessWidget {
+  const NeoplayApp({super.key, required this.storage});
 
   final Storage storage;
 
@@ -37,7 +37,7 @@ class MiauNetApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppState(storage),
       child: MaterialApp(
-        title: 'MIAUNET',
+        title: 'NEOPLAY',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
         home: const SplashScreen(),
@@ -45,5 +45,3 @@ class MiauNetApp extends StatelessWidget {
     );
   }
 }
-
-typedef NeoplayApp = MiauNetApp;
