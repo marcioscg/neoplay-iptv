@@ -1,7 +1,7 @@
 name: miaunet
-description: Player de listas IPTV (M3U/M3U8 e Xtream Codes) com EPG, VOD e favoritos, rebranded as MIAUNET.
+description: MIAUNET — Player IPTV com EPG, VOD, Séries e Painel Admin.
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.1.0+4
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
