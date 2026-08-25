@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/storage.dart';
 import 'state/app_state.dart';
 import 'screens/auth_screen.dart';
@@ -13,7 +15,10 @@ Future<void> main() async {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  final storage = await Storage.init();
+  final prefs = await SharedPreferences.getInstance();
+  const secure = FlutterSecureStorage();
+  final storage = Storage(prefs, secure);
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => AppState(storage)..bootstrap(),
