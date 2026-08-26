@@ -59,7 +59,31 @@ jobs:
 
       - name: Análise estática
         working-directory: ./app
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        id: analyze
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos --no-fatal-warnings --format machine > analyze.log 2>&1
+          status=$?
+          while IFS='|' read -r level _ _ file line column length message _; do
+            if [ "$level" = "ERROR" ]; then
+              echo "::error file=$file,line=$line,col=$column,endColumn=$((column + length))::$message"
+            fi
+          done < analyze.log
+          exit $status
+
+      - name: Publicar relatório do analyzer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-analyze-log
+          if-no-files-found: ignore
+          path: app/analyze.log
+
+      - name: Interromper se a análise falhou
+        if: steps.analyze.outcome == 'failure'
+        run: exit 1
 
       - name: Testes
         run: flutter test
