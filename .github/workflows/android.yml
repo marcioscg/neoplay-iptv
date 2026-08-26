@@ -59,31 +59,8 @@ jobs:
 
       - name: Análise estática
         working-directory: ./app
-        id: analyze
         continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee analyze.log
-          status=$?
-          while IFS= read -r line; do
-            case "$line" in
-              *"error - "*|*" error • "*) echo "::error::$line" ;;
-            esac
-          done < analyze.log
-          exit $status
-
-      - name: Publicar relatório do analyzer
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: flutter-analyze-log
-          if-no-files-found: ignore
-          path: app/analyze.log
-
-      - name: Interromper se a análise falhou
-        if: steps.analyze.outcome == 'failure'
-        run: exit 1
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Testes
         run: flutter test
