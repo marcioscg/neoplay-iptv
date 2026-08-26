@@ -73,17 +73,12 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          flutter build apk --release --target-platform android-arm,android-arm64 2>&1 | tee build.log
+          flutter build apk --release --target-platform android-arm,android-arm64 --verbose 2>&1 | tee build.log
           status=$?
-          while IFS= read -r line; do
-            case "$line" in
-              *"FAILURE: "*|*"Error: "*|*"error: "*) echo "::error::$line" ;;
-            esac
-          done < build.log
           {
             echo '### Flutter build log'
             echo '```text'
-            tail -n 120 build.log
+            grep -E -i -A 8 -B 3 'FAILURE:|What went wrong|error:|Exception|failed' build.log | tail -n 160
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
