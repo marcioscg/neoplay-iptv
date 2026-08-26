@@ -81,7 +81,21 @@ jobs:
       # Celulares, TV boxes e Fire Stick são ARM: deixar o x86 de fora evita
       # falhas de build do SDK do Google Cast e reduz o tamanho do APK.
       - name: Compilar APK universal (release)
-        run: flutter build apk --release --target-platform android-arm,android-arm64
+        id: build_universal
+        continue-on-error: true
+        run: flutter build apk --release --target-platform android-arm,android-arm64 2>&1 | tee build.log
+
+      - name: Publicar relatório do build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-build-log
+          if-no-files-found: ignore
+          path: app/build.log
+
+      - name: Interromper se o build falhou
+        if: steps.build_universal.outcome == 'failure'
+        run: exit 1
 
       - name: Compilar APKs por arquitetura
         run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64
