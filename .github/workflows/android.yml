@@ -68,7 +68,7 @@ jobs:
           status=$?
           while IFS= read -r line; do
             case "$line" in
-              *" error • "*) echo "::error::$line" ;;
+              *"error - "*|*" error • "*) echo "::error::$line" ;;
             esac
           done < analyze.log
           exit $status
