@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -60,6 +61,7 @@ class AppState extends ChangeNotifier {
     favorites = _storage.favorites;
     _recentIds = _storage.recent.toList();
     updatedAt = _storage.cachedAt;
+    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
 
     final cached = await _storage.loadCachedContent();
@@ -269,17 +271,72 @@ class AppState extends ChangeNotifier {
     if (cached != null) return cached;
 
     final p = playlist;
-    if (p == null || p.kind != PlaylistKind.xtream) {
-      throw const XtreamException(
-        'Temporadas só estão disponíveis em listas Xtream Codes',
+    if (p != null && p.kind == PlaylistKind.xtream) {
+      try {
+        final detail = await XtreamApi(p).seriesInfo(item.remoteId);
+        if (detail.seasons.isNotEmpty) {
+          _seriesCache[item.id] = detail;
+          return detail;
+        }
+        if (item.isSeriesContainer) {
+          throw const XtreamException('Esta série não retornou episódios');
+        }
+      } on XtreamException {
+        if (item.isSeriesContainer) rethrow;
+      }
+    }
+
+    final fromCatalog = _seriesFromCatalog(item);
+    if (fromCatalog.seasons.isNotEmpty) {
+      _seriesCache[item.id] = fromCatalog;
+      return fromCatalog;
+    }
+
+    throw const XtreamException(
+      'Temporadas só estão disponíveis em listas Xtream Codes',
+    );
+  }
+
+  static final _episodeLabel = RegExp(
+    r'(?:[sS]|[tT])(\d{1,2})\s*[eE](\d{1,3})',
+  );
+
+  SeriesDetail _seriesFromCatalog(MediaItem item) {
+    final pool = series
+        .where((e) =>
+            e.url.isNotEmpty &&
+            (e.group == item.group || e.id == item.id))
+        .toList();
+    if (pool.isEmpty) return const SeriesDetail();
+
+    final bySeason = <int, List<SeriesEpisode>>{};
+    for (var i = 0; i < pool.length; i++) {
+      final e = pool[i];
+      final match = _episodeLabel.firstMatch(e.name);
+      final season = match == null ? 1 : int.parse(match.group(1)!);
+      final number = match == null ? i + 1 : int.parse(match.group(2)!);
+      (bySeason[season] ??= <SeriesEpisode>[]).add(
+        SeriesEpisode(
+          id: e.id,
+          title: e.name,
+          url: e.url,
+          image: e.logo,
+          season: season,
+          number: number,
+        ),
       );
     }
-    final detail = await XtreamApi(p).seriesInfo(item.remoteId);
-    if (detail.seasons.isEmpty) {
-      throw const XtreamException('Esta série não retornou episódios');
-    }
-    _seriesCache[item.id] = detail;
-    return detail;
+    final keys = bySeason.keys.toList()..sort();
+    return SeriesDetail(
+      cover: item.logo,
+      seasons: [
+        for (final n in keys)
+          SeriesSeason(
+            n,
+            bySeason[n]!..sort((a, b) => a.number.compareTo(b.number)),
+          ),
+      ],
+    );
   }
 
   bool isFavorite(MediaItem item) => favorites.contains(item.id);
@@ -304,6 +361,7 @@ class AppState extends ChangeNotifier {
   Future<void> clearFavoritesAndHistory() async {
     favorites = <String>{};
     _recentIds = const [];
+    _progress = {};
     notifyListeners();
     await _storage.saveFavorites(const <String>{});
     await _storage.saveRecent(const []);
@@ -317,9 +375,114 @@ class AppState extends ChangeNotifier {
     error = null;
     favorites = <String>{};
     _recentIds = const [];
+    _progress = {};
     _seriesCache.clear();
     _apply(const PlaylistContent());
     stage = LoadStage.idle;
+    notifyListeners();
+  }
+
+  // ---------- controle parental / PIN ----------
+  static const defaultPin = '1234';
+
+  String? get parentalPin => _storage.parentalPin;
+  bool get isParentalEnabled => parentalPin != null && parentalPin!.isNotEmpty;
+
+  bool verifyPin(String input) {
+    final stored = parentalPin;
+    if (stored == null || stored.isEmpty) return input == defaultPin;
+    if (stored == defaultPin) return input == defaultPin;
+    if (stored == input) return true;
+    return stored == sha256.convert(utf8.encode(input)).toString();
+  }
+
+  Future<void> setParentalPin(String? pin) async {
+    if (pin == null || pin.isEmpty || pin == defaultPin) {
+      await _storage.saveParentalPin(null);
+    } else {
+      await _storage.saveParentalPin(
+        sha256.convert(utf8.encode(pin)).toString(),
+      );
+    }
+    notifyListeners();
+  }
+
+  // ---------- continuar assistindo ----------
+  Map<String, PlaybackProgress> _progress = {};
+
+  Map<String, PlaybackProgress> get playbackProgress =>
+      Map<String, PlaybackProgress>.unmodifiable(_progress);
+
+  PlaybackProgress? getProgress(String itemId) => _progress[itemId];
+
+  Future<void> saveProgress(MediaItem item, int posSec, int durSec) async {
+    if (item.kind == MediaKind.live || item.url.isEmpty || durSec <= 0) {
+      return;
+    }
+    final progress = PlaybackProgress(
+      mediaId: item.id,
+      title: item.name,
+      logo: item.logo,
+      group: item.group,
+      url: item.url,
+      kind: item.kind,
+      positionSeconds: posSec,
+      durationSeconds: durSec,
+      updatedAt: DateTime.now(),
+    );
+    await _storage.savePlaybackProgress(progress);
+    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+    notifyListeners();
+  }
+
+  Future<void> clearProgress(String itemId) async {
+    await _storage.clearPlaybackProgress(itemId);
+    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+    notifyListeners();
+  }
+
+  List<MediaItem> get continueWatchingItems {
+    if (_progress.isEmpty) return const [];
+    final list = _progress.values.toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final out = <MediaItem>[];
+    for (final p in list) {
+      final item = _byId[p.mediaId] ?? p.toMediaItem();
+      if (item.url.isNotEmpty) out.add(item);
+    }
+    return out;
+  }
+
+  // ---------- autenticação e usuários admin ----------
+  AdminUser? get loggedUser => _storage.loggedUser;
+
+  Future<void> setLoggedUser(AdminUser? user) async {
+    await _storage.saveLoggedUser(user);
+    notifyListeners();
+  }
+
+  Future<void> logoutUser() async {
+    await _storage.saveLoggedUser(null);
+    notifyListeners();
+  }
+
+  List<AdminUser> get adminUsers => _storage.adminUsers;
+
+  Future<void> saveAdminUser(AdminUser user) async {
+    final users = _storage.adminUsers.toList();
+    final index = users.indexWhere((u) => u.id == user.id);
+    if (index >= 0) {
+      users[index] = user;
+    } else {
+      users.add(user);
+    }
+    await _storage.saveAdminUsers(users);
+    notifyListeners();
+  }
+
+  Future<void> deleteAdminUser(String userId) async {
+    final users = _storage.adminUsers.where((u) => u.id != userId).toList();
+    await _storage.saveAdminUsers(users);
     notifyListeners();
   }
 }

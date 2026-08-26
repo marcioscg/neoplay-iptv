@@ -158,9 +158,9 @@ class SeriesEpisode {
     this.duration,
   });
 
-  /// Rótulo curto usado nas listas: S01E03.
+  /// Rótulo curto usado nas listas: T01E03.
   String get label =>
-      'S${season.toString().padLeft(2, '0')}E${number.toString().padLeft(2, '0')}';
+      'T${season.toString().padLeft(2, '0')}E${number.toString().padLeft(2, '0')}';
 
   /// Converte para item reproduzível, reaproveitando o player.
   MediaItem toMediaItem(String seriesName) => MediaItem(
@@ -200,4 +200,181 @@ class SeriesDetail {
 
   int get episodeCount =>
       seasons.fold<int>(0, (sum, s) => sum + s.episodes.length);
+}
+
+/// Tipos de Plano de Assinatura no Painel Admin.
+enum UserPlan {
+  mensal('Mensal', 30),
+  trimestral('Trimestral', 90),
+  semestral('Semestral', 180),
+  anual('Anual', 365),
+  vitalicio('Vitalício', null);
+
+  final String label;
+  final int? days;
+  const UserPlan(this.label, this.days);
+
+  static UserPlan fromString(String str) {
+    return UserPlan.values.firstWhere(
+      (e) => e.name.toLowerCase() == str.toLowerCase() || e.label.toLowerCase() == str.toLowerCase(),
+      orElse: () => UserPlan.mensal,
+    );
+  }
+}
+
+/// Status do Usuário no sistema.
+enum UserStatus {
+  active('Ativo'),
+  blocked('Bloqueado');
+
+  final String label;
+  const UserStatus(this.label);
+
+  static UserStatus fromString(String str) {
+    return UserStatus.values.firstWhere(
+      (e) => e.name.toLowerCase() == str.toLowerCase() || e.label.toLowerCase() == str.toLowerCase(),
+      orElse: () => UserStatus.active,
+    );
+  }
+}
+
+/// Modelo de Usuário para o Painel Admin / Autenticação.
+class AdminUser {
+  final String id;
+  final String name;
+  final String email;
+  final String password;
+  final UserPlan plan;
+  final UserStatus status;
+  final DateTime createdAt;
+  final DateTime? expiresAt;
+
+  const AdminUser({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.password,
+    this.plan = UserPlan.mensal,
+    this.status = UserStatus.active,
+    required this.createdAt,
+    this.expiresAt,
+  });
+
+  bool get isExpired {
+    if (plan == UserPlan.vitalicio || expiresAt == null) return false;
+    return DateTime.now().isAfter(expiresAt!);
+  }
+
+  bool get isActive => status == UserStatus.active && !isExpired;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'email': email,
+        'password': password,
+        'plan': plan.name,
+        'status': status.name,
+        'createdAt': createdAt.toIso8601String(),
+        'expiresAt': expiresAt?.toIso8601String(),
+      };
+
+  factory AdminUser.fromJson(Map<String, dynamic> j) => AdminUser(
+        id: (j['id'] ?? '') as String,
+        name: (j['name'] ?? '') as String,
+        email: (j['email'] ?? '') as String,
+        password: (j['password'] ?? '') as String,
+        plan: UserPlan.fromString((j['plan'] ?? 'mensal') as String),
+        status: UserStatus.fromString((j['status'] ?? 'active') as String),
+        createdAt: DateTime.tryParse((j['createdAt'] ?? '') as String) ?? DateTime.now(),
+        expiresAt: j['expiresAt'] != null ? DateTime.tryParse(j['expiresAt'] as String) : null,
+      );
+
+  AdminUser copyWith({
+    String? name,
+    String? email,
+    String? password,
+    UserPlan? plan,
+    UserStatus? status,
+    DateTime? expiresAt,
+  }) {
+    return AdminUser(
+      id: id,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      password: password ?? this.password,
+      plan: plan ?? this.plan,
+      status: status ?? this.status,
+      createdAt: createdAt,
+      expiresAt: expiresAt ?? this.expiresAt,
+    );
+  }
+}
+
+/// Posição salva de reprodução ("Continuar Assistindo").
+class PlaybackProgress {
+  final String mediaId;
+  final String title;
+  final String logo;
+  final String group;
+  final String url;
+  final MediaKind kind;
+  final int positionSeconds;
+  final int durationSeconds;
+  final DateTime updatedAt;
+
+  const PlaybackProgress({
+    required this.mediaId,
+    required this.title,
+    this.logo = '',
+    this.group = '',
+    required this.url,
+    required this.kind,
+    required this.positionSeconds,
+    required this.durationSeconds,
+    required this.updatedAt,
+  });
+
+  double get percent => durationSeconds > 0 ? (positionSeconds / durationSeconds).clamp(0.0, 1.0) : 0.0;
+
+  Map<String, dynamic> toJson() => {
+        'mediaId': mediaId,
+        'title': title,
+        'logo': logo,
+        'group': group,
+        'url': url,
+        'kind': kind.name,
+        'positionSeconds': positionSeconds,
+        'durationSeconds': durationSeconds,
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+
+  factory PlaybackProgress.fromJson(Map<String, dynamic> j) => PlaybackProgress(
+        mediaId: (j['mediaId'] ?? j['itemId'] ?? '') as String,
+        title: (j['title'] ?? '') as String,
+        logo: (j['logo'] ?? '') as String,
+        group: (j['group'] ?? '') as String,
+        url: (j['url'] ?? '') as String,
+        kind: MediaKind.values.firstWhere(
+          (e) => e.name == (j['kind'] ?? 'movie'),
+          orElse: () => MediaKind.movie,
+        ),
+        positionSeconds: _asInt(j['positionSeconds']),
+        durationSeconds: _asInt(j['durationSeconds']),
+        updatedAt: DateTime.tryParse((j['updatedAt'] ?? '') as String) ?? DateTime.now(),
+      );
+
+  MediaItem toMediaItem() => MediaItem(
+        id: mediaId,
+        name: title,
+        url: url,
+        logo: logo,
+        group: group,
+        kind: kind,
+      );
+}
+
+int _asInt(dynamic v) {
+  if (v is int) return v;
+  if (v is double) return v.round();
+  return int.tryParse('$v') ?? 0;
 }

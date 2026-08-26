@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +13,21 @@ import '../theme.dart';
 import '../widgets/cast_sheet.dart';
 import '../widgets/common.dart';
 
+enum PlayerAspect { fit, fill, stretch, ratio16x9, ratio4x3 }
+
+extension on PlayerAspect {
+  String get label => switch (this) {
+        PlayerAspect.fit => 'Fit',
+        PlayerAspect.fill => 'Fill',
+        PlayerAspect.stretch => 'Stretch',
+        PlayerAspect.ratio16x9 => '16:9',
+        PlayerAspect.ratio4x3 => '4:3',
+      };
+
+  PlayerAspect get next => PlayerAspect
+      .values[(index + 1) % PlayerAspect.values.length];
+}
+
 /// Tela 07 — Player (ao vivo e VOD) com EPG do canal e zapeamento.
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key, required this.item, this.siblings = const []});
@@ -23,6 +40,8 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
+  static const _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
   VideoPlayerController? _controller;
   late MediaItem _current;
 
@@ -31,16 +50,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _error;
   List<XtreamProgram> _epg = const [];
   bool _casting = false;
+  double _speed = 1.0;
+  PlayerAspect _aspect = PlayerAspect.fit;
+  String? _seekHint;
+  Timer? _progressTimer;
+  Timer? _hintTimer;
 
   @override
   void initState() {
     super.initState();
     _current = widget.item;
     _open(_current);
+    _progressTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _persistProgress(),
+    );
   }
 
   @override
   void dispose() {
+    _progressTimer?.cancel();
+    _hintTimer?.cancel();
+    _persistProgress();
+    _controller?.removeListener(_onVideo);
     _controller?.dispose();
     _restoreOrientation();
     super.dispose();
@@ -68,13 +100,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _open(MediaItem item) async {
+    await _persistProgress();
     setState(() {
       _current = item;
       _loading = true;
       _error = null;
       _epg = const [];
+      _speed = 1.0;
+      _seekHint = null;
     });
 
+    _controller?.removeListener(_onVideo);
     await _controller?.dispose();
     _controller = null;
 
@@ -87,11 +123,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       await controller.initialize();
       await controller.setVolume(1);
+      await controller.setPlaybackSpeed(_speed);
+      if (item.kind != MediaKind.live && mounted) {
+        final saved = context.read<AppState>().getProgress(item.id);
+        if (saved != null && saved.positionSeconds > 10) {
+          final target = Duration(seconds: saved.positionSeconds);
+          if (controller.value.duration == Duration.zero ||
+              target < controller.value.duration) {
+            await controller.seekTo(target);
+          }
+        }
+      }
       await controller.play();
       if (!mounted) {
         await controller.dispose();
         return;
       }
+      controller.addListener(_onVideo);
       setState(() {
         _controller = controller;
         _loading = false;
@@ -105,6 +153,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _error = _friendlyError('$e');
       });
     }
+  }
+
+  void _onVideo() {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    if (!c.value.isPlaying) {
+      _persistProgress();
+    }
+  }
+
+  Future<void> _persistProgress() async {
+    final c = _controller;
+    if (!mounted || c == null || !c.value.isInitialized) return;
+    if (_current.kind == MediaKind.live) return;
+    await context.read<AppState>().saveProgress(
+          _current,
+          c.value.position.inSeconds,
+          c.value.duration.inSeconds,
+        );
   }
 
   String _friendlyError(String raw) {
@@ -128,7 +195,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         item.kind != MediaKind.live) {
       return;
     }
-    final epg = await XtreamApi(playlist).shortEpg(item.id);
+    final epg = await XtreamApi(playlist).shortEpg(item.remoteId);
     if (!mounted) return;
     setState(() => _epg = epg);
   }
@@ -162,6 +229,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
+  void _seekBy(int seconds) {
+    final c = _controller;
+    if (c == null || _current.kind == MediaKind.live) return;
+    var next = c.value.position + Duration(seconds: seconds);
+    if (next < Duration.zero) next = Duration.zero;
+    final total = c.value.duration;
+    if (total > Duration.zero && next > total) next = total;
+    c.seekTo(next);
+    setState(() => _seekHint = seconds < 0 ? '${seconds}s' : '+${seconds}s');
+    _hintTimer?.cancel();
+    _hintTimer = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _seekHint = null);
+    });
+  }
+
+  void _onDoubleTap(TapDownDetails details, Size size) {
+    if (_current.kind == MediaKind.live) return;
+    final left = details.localPosition.dx < size.width / 2;
+    _seekBy(left ? -10 : 10);
+  }
+
+  Future<void> _setSpeed(double speed) async {
+    _speed = speed;
+    await _controller?.setPlaybackSpeed(speed);
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -172,7 +266,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            Center(child: _video()),
+            Positioned.fill(child: _video()),
             Positioned(
               top: 12,
               right: 12,
@@ -281,13 +375,67 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final c = _controller!;
     return ColoredBox(
       color: Colors.black,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
-          child: VideoPlayer(c),
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onDoubleTapDown: (d) =>
+                _onDoubleTap(d, Size(constraints.maxWidth, constraints.maxHeight)),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _aspectVideo(c),
+                if (_seekHint != null)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _seekHint!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
+  }
+
+  Widget _aspectVideo(VideoPlayerController c) {
+    final size = c.value.size;
+    final w = size.width == 0 ? 16.0 : size.width;
+    final h = size.height == 0 ? 9.0 : size.height;
+    final box = SizedBox(width: w, height: h, child: VideoPlayer(c));
+
+    switch (_aspect) {
+      case PlayerAspect.fit:
+        return FittedBox(fit: BoxFit.contain, child: box);
+      case PlayerAspect.fill:
+        return ClipRect(child: FittedBox(fit: BoxFit.cover, child: box));
+      case PlayerAspect.stretch:
+        return SizedBox.expand(
+          child: FittedBox(fit: BoxFit.fill, child: box),
+        );
+      case PlayerAspect.ratio16x9:
+        return Center(
+          child: AspectRatio(aspectRatio: 16 / 9, child: VideoPlayer(c)),
+        );
+      case PlayerAspect.ratio4x3:
+        return Center(
+          child: AspectRatio(aspectRatio: 4 / 3, child: VideoPlayer(c)),
+        );
+    }
   }
 
   Widget _controls(AppState state, bool isLive) {
@@ -315,9 +463,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
               if (c != null)
-                Text(
-                  _fmt(c.value.position),
-                  style: const TextStyle(fontSize: 12, color: AppColors.accent),
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: c,
+                  builder: (_, value, __) => Text(
+                    _fmt(value.position),
+                    style:
+                        const TextStyle(fontSize: 12, color: AppColors.accent),
+                  ),
                 ),
             ],
           ),
@@ -344,12 +496,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     : () => setState(() => playing ? c.pause() : c.play()),
               ),
               IconButton(
+                tooltip: '-10s',
+                icon: const Icon(Icons.replay_10),
+                onPressed: c == null || isLive ? null : () => _seekBy(-10),
+              ),
+              IconButton(
                 icon: const Icon(Icons.skip_previous),
                 onPressed: widget.siblings.isEmpty ? null : () => _zap(-1),
               ),
               IconButton(
                 icon: const Icon(Icons.skip_next),
                 onPressed: widget.siblings.isEmpty ? null : () => _zap(1),
+              ),
+              IconButton(
+                tooltip: '+10s',
+                icon: const Icon(Icons.forward_10),
+                onPressed: c == null || isLive ? null : () => _seekBy(10),
               ),
               IconButton(
                 icon: Icon(
@@ -364,6 +526,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ],
           ),
+          if (!isLive && c != null)
+            Row(
+              children: [
+                PopupMenuButton<double>(
+                  tooltip: 'Velocidade',
+                  initialValue: _speed,
+                  onSelected: _setSpeed,
+                  itemBuilder: (_) => [
+                    for (final s in _speeds)
+                      PopupMenuItem(
+                        value: s,
+                        child: Text('${s}x'),
+                      ),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 8),
+                    child: Text(
+                      '${_speed}x',
+                      style: const TextStyle(
+                          fontSize: 12.5, color: AppColors.accent),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => setState(() => _aspect = _aspect.next),
+                  child: Text(
+                    _aspect.label,
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -374,7 +570,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return const EmptyState(
         icon: Icons.movie_outlined,
         title: 'Reprodução sob demanda',
-        message: 'Use a barra acima para avançar ou retroceder.',
+        message:
+            'Toque duas vezes à esquerda/direita para ±10s. Ajuste velocidade e aspecto abaixo do vídeo.',
       );
     }
     if (_epg.isEmpty) {

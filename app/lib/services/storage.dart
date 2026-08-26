@@ -18,6 +18,10 @@ class Storage {
   static const _kFavorites = 'favorites';
   static const _kRecent = 'recent';
   static const _kCacheAt = 'cache_at';
+  static const _kParentalPin = 'parental_pin';
+  static const _kParentalEnabled = 'parental_enabled';
+  static const _kUsers = 'admin_users';
+  static const _kProgress = 'playback_progress';
 
   // Chaves da versão 1.0.0, removidas na migração.
   static const _kLegacyLive = 'cache_live';
@@ -102,6 +106,107 @@ class Storage {
   List<String> get recent => _p.getStringList(_kRecent) ?? const [];
 
   Future<void> saveRecent(List<String> ids) => _p.setStringList(_kRecent, ids);
+
+  // ---------- controle parental ----------
+  String? get parentalPin {
+    final v = _p.getString(_kParentalPin);
+    if (v == null || v.isEmpty) return null;
+    return v;
+  }
+
+  Future<void> saveParentalPin(String? pin) async {
+    if (pin == null || pin.isEmpty) {
+      await _p.remove(_kParentalPin);
+    } else {
+      await _p.setString(_kParentalPin, pin);
+    }
+  }
+
+  bool get parentalEnabled => _p.getBool(_kParentalEnabled) ?? true;
+
+  Future<void> saveParentalEnabled(bool enabled) =>
+      _p.setBool(_kParentalEnabled, enabled);
+
+  // ---------- autenticação & admin ----------
+  AdminUser? get loggedUser {
+    final raw = _p.getString('logged_user');
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return AdminUser.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } on Exception {
+      return null;
+    }
+  }
+
+  Future<void> saveLoggedUser(AdminUser? user) async {
+    if (user == null) {
+      await _p.remove('logged_user');
+    } else {
+      await _p.setString('logged_user', jsonEncode(user.toJson()));
+    }
+  }
+
+  List<AdminUser> get adminUsers {
+    final raw = _p.getString(_kUsers);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final list = jsonDecode(raw);
+      if (list is! List) return const [];
+      return [
+        for (final e in list)
+          if (e is Map) AdminUser.fromJson(Map<String, dynamic>.from(e)),
+      ];
+    } on Exception {
+      return const [];
+    }
+  }
+
+  Future<void> saveAdminUsers(List<AdminUser> users) => _p.setString(
+        _kUsers,
+        jsonEncode([for (final u in users) u.toJson()]),
+      );
+
+  // ---------- progresso de reprodução ----------
+  Map<String, PlaybackProgress> get playbackProgress {
+    final raw = _p.getString(_kProgress);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final map = jsonDecode(raw);
+      if (map is! Map) return {};
+      final out = <String, PlaybackProgress>{};
+      map.forEach((k, v) {
+        if (v is Map) {
+          out['$k'] = PlaybackProgress.fromJson(Map<String, dynamic>.from(v));
+        }
+      });
+      return out;
+    } on Exception {
+      return {};
+    }
+  }
+
+  Future<void> savePlaybackProgress(PlaybackProgress progress) async {
+    final map = playbackProgress;
+    if (progress.percent >= 0.95 || progress.positionSeconds < 10) {
+      map.remove(progress.mediaId);
+    } else {
+      map[progress.mediaId] = progress;
+    }
+    await _p.setString(
+      _kProgress,
+      jsonEncode({for (final e in map.entries) e.key: e.value.toJson()}),
+    );
+  }
+
+  Future<void> clearPlaybackProgress(String itemId) async {
+    final map = playbackProgress;
+    if (map.remove(itemId) != null) {
+      await _p.setString(
+        _kProgress,
+        jsonEncode({for (final e in map.entries) e.key: e.value.toJson()}),
+      );
+    }
+  }
 
   Future<void> clearAll() async {
     await _p.clear();
