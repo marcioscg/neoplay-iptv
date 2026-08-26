@@ -63,13 +63,13 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          set +e
-          flutter analyze --no-fatal-infos --no-fatal-warnings --format machine > analyze.log 2>&1
+          set -o pipefail
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee analyze.log
           status=$?
-          while IFS='|' read -r level _ _ file line column length message _; do
-            if [ "$level" = "ERROR" ]; then
-              echo "::error file=$file,line=$line,col=$column,endColumn=$((column + length))::$message"
-            fi
+          while IFS= read -r line; do
+            case "$line" in
+              *" error • "*) echo "::error::$line" ;;
+            esac
           done < analyze.log
           exit $status
 
