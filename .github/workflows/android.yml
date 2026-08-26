@@ -80,6 +80,12 @@ jobs:
               *"FAILURE: "*|*"Error: "*|*"error: "*) echo "::error::$line" ;;
             esac
           done < build.log
+          {
+            echo '### Flutter build log'
+            echo '```text'
+            tail -n 120 build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
       - name: Publicar relatório do build
