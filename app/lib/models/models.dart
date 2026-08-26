@@ -334,7 +334,9 @@ class PlaybackProgress {
     required this.updatedAt,
   });
 
-  double get percent => durationSeconds > 0 ? (positionSeconds / durationSeconds).clamp(0.0, 1.0) : 0.0;
+  double get percent => durationSeconds > 0
+      ? (positionSeconds / durationSeconds).clamp(0.0, 1.0).toDouble()
+      : 0.0;
 
   Map<String, dynamic> toJson() => {
         'mediaId': mediaId,
