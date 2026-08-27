@@ -64,7 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 18),
                 const Center(child: MiauLogo(size: 26)),
                 const SizedBox(height: 6),
-                const Center(
+                Center(
                   child: Text(
                     'Entre para acessar sua lista',
                     style: TextStyle(fontSize: 12.5, color: AppColors.muted),
@@ -132,7 +132,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 4),
                         Text(
                           _error!,
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.bad),
                         ),
                       ],

@@ -117,7 +117,7 @@ class _PinDialogState extends State<_PinDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(widget.message,
-              style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
+              style: TextStyle(fontSize: 12.5, color: AppColors.muted)),
           const SizedBox(height: 16),
           TextField(
             controller: _ctrl,

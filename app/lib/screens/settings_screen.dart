@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
+import '../services/launcher.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -78,7 +79,7 @@ class SettingsScreen extends StatelessWidget {
             tileColor: AppColors.surface1,
             title: const Text('Ativar controle parental',
                 style: TextStyle(fontSize: 14)),
-            subtitle: const Text(
+            subtitle: Text(
               'Pede PIN para abrir categorias adultas',
               style: TextStyle(fontSize: 11.5, color: AppColors.muted),
             ),
@@ -90,7 +91,7 @@ class SettingsScreen extends StatelessWidget {
               tileColor: AppColors.surface1,
               title: const Text('Ocultar conteúdo adulto',
                   style: TextStyle(fontSize: 14)),
-              subtitle: const Text(
+              subtitle: Text(
                 'Some com as categorias adultas da navegação e da busca',
                 style: TextStyle(fontSize: 11.5, color: AppColors.muted),
               ),
@@ -113,6 +114,10 @@ class SettingsScreen extends StatelessWidget {
                 onTap: state.lockAdultSession,
               ),
           ],
+          if (!state.isMaster && state.session?.account != null) ...[
+            const SectionLabel('Meu plano'),
+            _PlanCard(account: state.session!.account!),
+          ],
           const SectionLabel('Conta'),
           _info('Conectado como ${state.session?.displayName ?? '—'}'),
           CategoryTile(
@@ -122,7 +127,7 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _confirmLogout(context, state),
           ),
           const SectionLabel('Aplicativo'),
-          const _StaticRow(label: 'Tema de cores', value: 'Escuro (padrão)'),
+          _ThemeRow(state: state),
           const _StaticRow(label: 'Língua', value: 'Português (BR)'),
           const _StaticRow(label: 'Player', value: 'ExoPlayer (Media3)'),
           CategoryTile(
@@ -136,7 +141,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  'MIAU NET · versão 1.0.3',
+                  'MIAU NET · versão 1.0.5',
                   style: TextStyle(fontSize: 11.5, color: Color(0xFF5B6274)),
                 ),
                 SizedBox(height: 6),
@@ -159,8 +164,7 @@ class SettingsScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Text(
           text,
-          style: const TextStyle(
-              fontSize: 12, color: AppColors.muted, height: 1.45),
+          style: TextStyle(fontSize: 12, color: AppColors.muted, height: 1.45),
         ),
       );
 
@@ -243,7 +247,7 @@ class _StaticRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.surface1,
         border: Border(bottom: BorderSide(color: AppColors.line)),
       ),
@@ -251,10 +255,126 @@ class _StaticRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
-          Text(value,
-              style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+          Text(value, style: TextStyle(fontSize: 12, color: AppColors.muted)),
         ],
       ),
     );
   }
+}
+
+/// Seletor de tema: do sistema / claro / escuro.
+class _ThemeRow extends StatelessWidget {
+  const _ThemeRow({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface1,
+        border: Border(bottom: BorderSide(color: AppColors.line)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text('Tema de cores', style: TextStyle(fontSize: 14)),
+          ),
+          DropdownButton<AppThemeChoice>(
+            value: state.themeChoice,
+            underline: const SizedBox.shrink(),
+            style: TextStyle(fontSize: 13, color: AppColors.text),
+            dropdownColor: AppColors.surface2,
+            items: [
+              for (final c in AppThemeChoice.values)
+                DropdownMenuItem(value: c, child: Text(c.label)),
+            ],
+            onChanged: (v) {
+              if (v != null) state.setThemeChoice(v);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Cartão "Meu plano" para a conta comum: validade + botão de renovação.
+class _PlanCard extends StatelessWidget {
+  const _PlanCard({required this.account});
+  final AdminUser account;
+
+  @override
+  Widget build(BuildContext context) {
+    final expired = account.isExpired;
+    final days = account.daysLeft;
+    final lifetime = account.plan == UserPlan.vitalicio;
+
+    final String status;
+    if (lifetime) {
+      status = 'Plano vitalício — sem data de vencimento.';
+    } else if (account.expiresAt == null) {
+      status = 'Sem data de vencimento informada.';
+    } else if (expired) {
+      status = 'Venceu em ${_date(account.expiresAt!)}. Renove para liberar.';
+    } else {
+      status = 'Vence em ${_date(account.expiresAt!)}'
+          '${days != null ? ' · ${days <= 0 ? 'hoje' : '$days ${days == 1 ? 'dia' : 'dias'}'}' : ''}.';
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface1,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: expired
+              ? AppColors.bad.withValues(alpha: 0.5)
+              : AppColors.line,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.workspace_premium_outlined,
+                  size: 18, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text('Plano ${account.plan.label}',
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(status,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: expired ? AppColors.bad : AppColors.muted,
+                  height: 1.4)),
+          if (!lifetime) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => _renew(context),
+              icon: const Icon(Icons.chat, size: 18),
+              label: const Text('Renovar pelo WhatsApp'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _renew(BuildContext context) async {
+    final ok =
+        await Launcher.whatsapp('Meu plano está vencendo, preciso renovar.');
+    if (!context.mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Não foi possível abrir o WhatsApp.')),
+    );
+  }
+
+  static String _date(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 }

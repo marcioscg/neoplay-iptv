@@ -252,6 +252,11 @@ class AdminUser {
   final DateTime createdAt;
   final DateTime? expiresAt;
 
+  /// Aparelho e momento do último acesso desta conta (preenchido no login).
+  /// Só cruza aparelhos no modo Firebase; no modo local fica em branco.
+  final String lastDevice;
+  final DateTime? lastSeenAt;
+
   const AdminUser({
     required this.id,
     required this.name,
@@ -262,6 +267,8 @@ class AdminUser {
     this.status = UserStatus.active,
     required this.createdAt,
     this.expiresAt,
+    this.lastDevice = '',
+    this.lastSeenAt,
   });
 
   bool get isExpired {
@@ -270,6 +277,31 @@ class AdminUser {
   }
 
   bool get isActive => status == UserStatus.active && !isExpired;
+
+  /// Dias até o vencimento (negativo se já venceu). `null` para vitalício.
+  int? get daysLeft {
+    if (plan == UserPlan.vitalicio || expiresAt == null) return null;
+    final diff = expiresAt!.difference(DateTime.now());
+    return diff.inSeconds <= 0 ? diff.inDays : diff.inHours ~/ 24 + 1;
+  }
+
+  /// Está perto de vencer (7 dias ou menos) mas ainda não venceu.
+  bool get isExpiringSoon {
+    final d = daysLeft;
+    return d != null && d >= 0 && d <= 7 && !isExpired;
+  }
+
+  /// Nova data de vencimento ao renovar por mais um período do plano.
+  /// Parte da data atual de expiração se ela ainda está no futuro; senão de hoje.
+  DateTime? renewedExpiry({DateTime? from}) {
+    final days = plan.days;
+    if (days == null) return null;
+    final now = DateTime.now();
+    final base = (expiresAt != null && expiresAt!.isAfter(now))
+        ? expiresAt!
+        : (from ?? now);
+    return base.add(Duration(days: days));
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -281,6 +313,8 @@ class AdminUser {
         'status': status.name,
         'createdAt': createdAt.toIso8601String(),
         'expiresAt': expiresAt?.toIso8601String(),
+        'lastDevice': lastDevice,
+        'lastSeenAt': lastSeenAt?.toIso8601String(),
       };
 
   factory AdminUser.fromJson(Map<String, dynamic> j) => AdminUser(
@@ -293,6 +327,10 @@ class AdminUser {
         status: UserStatus.fromString((j['status'] ?? 'active') as String),
         createdAt: DateTime.tryParse((j['createdAt'] ?? '') as String) ?? DateTime.now(),
         expiresAt: j['expiresAt'] != null ? DateTime.tryParse(j['expiresAt'] as String) : null,
+        lastDevice: (j['lastDevice'] ?? '') as String,
+        lastSeenAt: j['lastSeenAt'] != null
+            ? DateTime.tryParse(j['lastSeenAt'] as String)
+            : null,
       );
 
   AdminUser copyWith({
@@ -303,6 +341,8 @@ class AdminUser {
     UserPlan? plan,
     UserStatus? status,
     DateTime? expiresAt,
+    String? lastDevice,
+    DateTime? lastSeenAt,
   }) {
     return AdminUser(
       id: id,
@@ -314,8 +354,76 @@ class AdminUser {
       status: status ?? this.status,
       createdAt: createdAt,
       expiresAt: expiresAt ?? this.expiresAt,
+      lastDevice: lastDevice ?? this.lastDevice,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
     );
   }
+}
+
+/// Tabela de preços dos planos, editável no painel (aba Pagamentos).
+class Pricing {
+  final double mensal;
+  final double trimestral;
+  final double semestral;
+  final double anual;
+
+  const Pricing({
+    this.mensal = 0.0,
+    this.trimestral = 0.0,
+    this.semestral = 0.0,
+    this.anual = 0.0,
+  });
+
+  static const empty = Pricing();
+
+  double forPlan(UserPlan plan) => switch (plan) {
+        UserPlan.mensal => mensal,
+        UserPlan.trimestral => trimestral,
+        UserPlan.semestral => semestral,
+        UserPlan.anual => anual,
+        UserPlan.vitalicio => 0.0,
+      };
+
+  /// Valor do plano dividido pelos meses que ele cobre — base do MRR.
+  double monthlyEquivalent(UserPlan plan) => switch (plan) {
+        UserPlan.mensal => mensal,
+        UserPlan.trimestral => trimestral / 3,
+        UserPlan.semestral => semestral / 6,
+        UserPlan.anual => anual / 12,
+        UserPlan.vitalicio => 0.0,
+      };
+
+  Pricing copyWith({
+    double? mensal,
+    double? trimestral,
+    double? semestral,
+    double? anual,
+  }) =>
+      Pricing(
+        mensal: mensal ?? this.mensal,
+        trimestral: trimestral ?? this.trimestral,
+        semestral: semestral ?? this.semestral,
+        anual: anual ?? this.anual,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'mensal': mensal,
+        'trimestral': trimestral,
+        'semestral': semestral,
+        'anual': anual,
+      };
+
+  factory Pricing.fromJson(Map<String, dynamic> j) => Pricing(
+        mensal: _asDouble(j['mensal']),
+        trimestral: _asDouble(j['trimestral']),
+        semestral: _asDouble(j['semestral']),
+        anual: _asDouble(j['anual']),
+      );
+}
+
+double _asDouble(dynamic v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse('$v'.replaceAll(',', '.')) ?? 0;
 }
 
 /// Evento de uso registrado quando alguém abre um conteúdo. Base da central de
@@ -326,6 +434,10 @@ class UsageEvent {
   final String mediaId;
   final String title;
   final String group;
+
+  /// Para episódios de série: o nome da série (ex.: "Breaking Bad"). O [title]
+  /// segue sendo o episódio ("T01E03 · Piloto"). Vazio para filmes e canais.
+  final String seriesName;
   final MediaKind kind;
   final DateTime watchedAt;
 
@@ -335,9 +447,15 @@ class UsageEvent {
     required this.mediaId,
     required this.title,
     this.group = '',
+    this.seriesName = '',
     required this.kind,
     required this.watchedAt,
   });
+
+  /// Texto completo do que foi assistido, pronto para exibir.
+  String get fullTitle => seriesName.isEmpty || title.startsWith(seriesName)
+      ? title
+      : '$seriesName · $title';
 
   Map<String, dynamic> toJson() => {
         'e': userEmail,
@@ -345,6 +463,7 @@ class UsageEvent {
         'i': mediaId,
         't': title,
         'g': group,
+        's': seriesName,
         'k': kind.name,
         'w': watchedAt.toIso8601String(),
       };
@@ -355,6 +474,7 @@ class UsageEvent {
         mediaId: (j['i'] ?? '') as String,
         title: (j['t'] ?? '') as String,
         group: (j['g'] ?? '') as String,
+        seriesName: (j['s'] ?? '') as String,
         kind: MediaKind.values.firstWhere(
           (x) => x.name == (j['k'] ?? 'live'),
           orElse: () => MediaKind.live,

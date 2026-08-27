@@ -93,7 +93,7 @@ class _CastSheetState extends State<_CastSheet> {
           children: [
             Row(
               children: [
-                const Icon(Icons.cast, color: AppColors.accent, size: 20),
+                Icon(Icons.cast, color: AppColors.accent, size: 20),
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
@@ -108,7 +108,7 @@ class _CastSheetState extends State<_CastSheet> {
               ],
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'A TV precisa estar no mesmo Wi-Fi do celular.',
               style: TextStyle(fontSize: 11.5, color: AppColors.muted),
             ),
@@ -120,7 +120,7 @@ class _CastSheetState extends State<_CastSheet> {
                   color: const Color(0x1AFFC93C),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
+                child: Text(
                   'Este arquivo está em MKV/AVI: o Chromecast pode não abrir. '
                   'Se travar, use um episódio em MP4 ou m3u8.',
                   style: TextStyle(
@@ -132,7 +132,7 @@ class _CastSheetState extends State<_CastSheet> {
               const SizedBox(height: 10),
               Text(
                 _error!,
-                style: const TextStyle(fontSize: 11.5, color: AppColors.bad),
+                style: TextStyle(fontSize: 11.5, color: AppColors.bad),
               ),
             ],
             const SizedBox(height: 12),
@@ -143,17 +143,17 @@ class _CastSheetState extends State<_CastSheet> {
                 builder: (context, snapshot) {
                   final devices = snapshot.data ?? const <GoogleCastDevice>[];
                   if (devices.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 26),
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 26),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
-                          SizedBox(width: 12),
+                          const SizedBox(width: 12),
                           Text(
                             'Procurando aparelhos na rede…',
                             style: TextStyle(
@@ -167,13 +167,13 @@ class _CastSheetState extends State<_CastSheet> {
                     shrinkWrap: true,
                     itemCount: devices.length,
                     separatorBuilder: (_, __) =>
-                        const Divider(height: 1, color: AppColors.line),
+                        Divider(height: 1, color: AppColors.line),
                     itemBuilder: (context, i) {
                       final d = devices[i];
                       final busy = _connecting == d.deviceID;
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.tv, color: AppColors.muted),
+                        leading: Icon(Icons.tv, color: AppColors.muted),
                         title: Text(
                           d.friendlyName,
                           style: const TextStyle(
@@ -181,7 +181,7 @@ class _CastSheetState extends State<_CastSheet> {
                         ),
                         subtitle: Text(
                           d.modelName ?? 'Google Cast',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 11, color: AppColors.muted),
                         ),
                         trailing: busy
@@ -229,7 +229,7 @@ class CastPanel extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.cast_connected, size: 42, color: AppColors.accent),
+          Icon(Icons.cast_connected, size: 42, color: AppColors.accent),
           const SizedBox(height: 12),
           Text(
             'Transmitindo em $deviceName',
@@ -242,7 +242,7 @@ class CastPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+            style: TextStyle(fontSize: 11.5, color: AppColors.muted),
           ),
           const SizedBox(height: 14),
           StreamBuilder<GoggleCastMediaStatus?>(

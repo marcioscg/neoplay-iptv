@@ -158,7 +158,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                             ),
                             child: Text(
                               c,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 10.5, color: AppColors.muted),
                             ),
                           ),
@@ -173,7 +173,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
             const SizedBox(height: 14),
             Text(
               detail.plot,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12.5, color: AppColors.muted, height: 1.5),
             ),
           ],
@@ -209,7 +209,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     return InkWell(
       onTap: () => openPlayer(context, item, playlist: items),
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: AppColors.line)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -242,14 +242,13 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                           : ep.plot,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(fontSize: 11, color: AppColors.muted),
+                      style: TextStyle(fontSize: 11, color: AppColors.muted),
                     ),
                   ],
                 ],
               ),
             ),
-            const Icon(Icons.play_circle_outline,
+            Icon(Icons.play_circle_outline,
                 size: 22, color: AppColors.accent),
           ],
         ),

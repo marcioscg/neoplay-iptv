@@ -64,10 +64,40 @@ class MiauNetApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppState(storage, accounts),
-      child: MaterialApp(
+      child: const _ThemedApp(),
+    );
+  }
+}
+
+/// Aplica o tema escolhido (sistema / claro / escuro) e mantém [appIsDark]
+/// sincronizado, para que as cores de [AppColors] acompanhem a troca.
+class _ThemedApp extends StatelessWidget {
+  const _ThemedApp();
+
+  @override
+  Widget build(BuildContext context) {
+    final choice = context.watch<AppState>().themeChoice;
+    final systemDark =
+        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    final dark = switch (choice) {
+      AppThemeChoice.system => systemDark,
+      AppThemeChoice.light => false,
+      AppThemeChoice.dark => true,
+    };
+    if (appIsDark.value != dark) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (appIsDark.value != dark) appIsDark.value = dark;
+      });
+    }
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: appIsDark,
+      builder: (context, _, __) => MaterialApp(
         title: 'MIAU NET',
         debugShowCheckedModeBanner: false,
-        theme: buildTheme(),
+        theme: buildTheme(dark: false),
+        darkTheme: buildTheme(dark: true),
+        themeMode: dark ? ThemeMode.dark : ThemeMode.light,
         home: const RootGate(),
       ),
     );

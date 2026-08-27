@@ -1,7 +1,7 @@
 name: miaunet
 description: MIAUNET — Player IPTV com EPG, VOD, Séries e Painel Admin.
 publish_to: 'none'
-version: 1.0.4+7
+version: 1.0.5+8
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -16,6 +16,7 @@ dependencies:
   shared_preferences: ^2.3.2
   video_player: ^2.9.2
   crypto: ^3.0.3
+  url_launcher: ^6.3.0
   # Backend das contas e da central de uso. Sem trava de versão superior:
   # o pub resolve a versão mais nova compatível com o SDK do CI.
   firebase_core: '>=3.6.0'

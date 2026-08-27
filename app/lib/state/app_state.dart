@@ -7,10 +7,13 @@ import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
 import '../services/accounts_repository.dart';
+import '../services/device_label.dart';
+import '../services/genres.dart';
 import '../services/importer.dart';
 import '../services/parental.dart';
 import '../services/storage.dart';
 import '../services/xtream_api.dart';
+import '../theme.dart';
 
 enum LoadStage { idle, loading, ready, error }
 
@@ -66,6 +69,11 @@ class AppState extends ChangeNotifier {
   // Episódios M3U agrupados por série (id do container -> episódios).
   Map<String, List<MediaItem>> _m3uEpisodes = const {};
 
+  // Índices por gênero (rótulo -> itens), um por aba. Recalculados na importação.
+  Map<String, List<MediaItem>> _genreLive = const {};
+  Map<String, List<MediaItem>> _genreMovies = const {};
+  Map<String, List<MediaItem>> _genreSeries = const {};
+
   bool _busy = false;
   bool _booted = false;
 
@@ -80,6 +88,16 @@ class AppState extends ChangeNotifier {
   // ---------- controle parental ----------
   bool _adultUnlocked = false;
 
+  // ---------- tema ----------
+  AppThemeChoice _themeChoice = AppThemeChoice.system;
+  AppThemeChoice get themeChoice => _themeChoice;
+
+  Future<void> setThemeChoice(AppThemeChoice choice) async {
+    _themeChoice = choice;
+    await _storage.saveThemeChoice(choice.name);
+    notifyListeners();
+  }
+
   bool get hasPlaylist => playlist != null;
   bool get isBusy => _busy;
 
@@ -87,6 +105,8 @@ class AppState extends ChangeNotifier {
   Future<void> bootstrap() async {
     if (_booted) return;
     _booted = true;
+
+    _themeChoice = AppThemeChoiceX.fromName(_storage.themeChoice);
 
     await _accounts.init(onChanged: notifyListeners);
     await _tryAutoLogin();
@@ -256,8 +276,22 @@ class AppState extends ChangeNotifier {
     _liveCategories = _categories(_liveByGroup);
     _movieCategories = _categories(_movieByGroup);
     _seriesCategories = _categories(_seriesByGroup);
+    _genreLive = _byGenre(live);
+    _genreMovies = _byGenre(movies);
+    _genreSeries = _byGenre(series);
     _recentIds = _recentIds.where(_byId.containsKey).toList();
     _seriesCache.clear();
+  }
+
+  /// Distribui os itens nos gêneros que reconhecemos pelo nome da pasta/título.
+  Map<String, List<MediaItem>> _byGenre(List<MediaItem> items) {
+    final map = <String, List<MediaItem>>{};
+    for (final item in items) {
+      for (final g in Genres.of(item.group, item.name)) {
+        (map[g] ??= <MediaItem>[]).add(item);
+      }
+    }
+    return map;
   }
 
   // ---------- agrupamento de séries M3U ----------
@@ -446,6 +480,32 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------- filtros por gênero (cruzam todas as pastas) ----------
+  Map<String, List<MediaItem>> _genreMapFor(List<MediaItem> items) => items == live
+      ? _genreLive
+      : items == series
+          ? _genreSeries
+          : _genreMovies;
+
+  /// Gêneros com pelo menos um item na aba, na ordem fixa de [Genres.all].
+  /// Esconde "+18" quando o controle parental está ocultando conteúdo adulto.
+  List<String> genresFor(List<MediaItem> items) {
+    final map = _genreMapFor(items);
+    return [
+      for (final g in Genres.all)
+        if ((map[g]?.isNotEmpty ?? false) &&
+            !(Genres.isAdultGenre(g) && _filterAdult))
+          g,
+    ];
+  }
+
+  /// Itens de um gênero, de qualquer pasta. Aplica o filtro adulto da sessão.
+  List<MediaItem> inGenre(List<MediaItem> items, String genre) {
+    final hit = _genreMapFor(items)[genre] ?? const <MediaItem>[];
+    if (!_filterAdult) return hit;
+    return hit.where((e) => !Parental.isAdult(e.group)).toList();
+  }
+
   List<MediaItem> inCategory(List<MediaItem> items, String category) {
     final source = items == live
         ? _liveByGroup
@@ -540,12 +600,16 @@ class AppState extends ChangeNotifier {
         : s.isMaster
             ? kMasterEmail
             : s.email;
+    // Episódio de série: o nome da série vem no `group`; guardamos separado
+    // para o painel mostrar "Série · T01E03 · Título" e não só "T01E03".
+    final isEpisode = item.kind == MediaKind.series && item.group.isNotEmpty;
     unawaited(_accounts.recordEvent(UsageEvent(
       userEmail: email,
       userName: s?.displayName ?? '',
       mediaId: item.id,
       title: item.name,
       group: item.group,
+      seriesName: isEpisode ? item.group : '',
       kind: item.kind,
       watchedAt: DateTime.now(),
     )));
@@ -679,8 +743,19 @@ class AppState extends ChangeNotifier {
     session = SessionUser(email: user.email, account: user);
     await _remember(remember, e, password);
     notifyListeners();
+    unawaited(_reportDevice(user));
     await _applyAccountPlaylist(user);
     return null;
+  }
+
+  /// Anota, no perfil da conta, o aparelho e o horário deste acesso.
+  Future<void> _reportDevice(AdminUser user) async {
+    try {
+      final label = await DeviceLabel.resolve();
+      await _accounts.reportDevice(user.id, label);
+    } on Object {
+      // telemetria best-effort
+    }
   }
 
   Future<void> _remember(bool remember, String email, String password) async {
@@ -711,6 +786,7 @@ class AppState extends ChangeNotifier {
     if (user != null && user.isActive) {
       session = SessionUser(email: user.email, account: user);
       _pendingAccount = user;
+      unawaited(_reportDevice(user));
     }
   }
 
@@ -752,6 +828,16 @@ class AppState extends ChangeNotifier {
   // ---------- contas (painel de controle) ----------
   List<AdminUser> get adminUsers => _accounts.users;
 
+  /// Contas que vencem em até 7 dias, mais próximas do vencimento primeiro.
+  List<AdminUser> get expiringSoonUsers => adminUsers
+      .where((u) => u.isExpiringSoon)
+      .toList()
+    ..sort((a, b) => (a.daysLeft ?? 0).compareTo(b.daysLeft ?? 0));
+
+  /// Contas já vencidas (login bloqueado até o master renovar).
+  List<AdminUser> get expiredUsers =>
+      adminUsers.where((u) => u.isExpired).toList();
+
   Future<void> saveAdminUser(AdminUser user) async {
     await _accounts.saveUser(user);
     notifyListeners();
@@ -759,6 +845,32 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteAdminUser(String userId) async {
     await _accounts.deleteUser(userId);
+    notifyListeners();
+  }
+
+  /// Renova o plano da conta por mais um período e reativa o acesso.
+  Future<void> renewUser(AdminUser user) async {
+    final next = user.copyWith(
+      expiresAt: user.renewedExpiry(),
+      status: UserStatus.active,
+    );
+    await _accounts.saveUser(next);
+    notifyListeners();
+  }
+
+  Future<void> setUserBlocked(AdminUser user, bool blocked) async {
+    final next = user.copyWith(
+      status: blocked ? UserStatus.blocked : UserStatus.active,
+    );
+    await _accounts.saveUser(next);
+    notifyListeners();
+  }
+
+  // ---------- preços dos planos ----------
+  Pricing get pricing => _accounts.pricing;
+
+  Future<void> savePricing(Pricing p) async {
+    await _accounts.savePricing(p);
     notifyListeners();
   }
 

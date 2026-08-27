@@ -158,7 +158,7 @@ class _SetupScreenState extends State<SetupScreen>
                       state.progressLabel.isEmpty
                           ? 'Processando…'
                           : state.progressLabel,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12.5, color: AppColors.muted),
                     ),
                   ),
@@ -180,11 +180,11 @@ class _SetupScreenState extends State<SetupScreen>
               color: const Color(0x08FFFFFF),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.shield_outlined, size: 16, color: AppColors.muted),
-                SizedBox(width: 10),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'O aplicativo não fornece nem hospeda conteúdo. '
@@ -218,7 +218,7 @@ class _SetupScreenState extends State<SetupScreen>
             const SizedBox(height: 5),
             Text(
               subtitle,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12, color: AppColors.muted, height: 1.45),
             ),
           ],

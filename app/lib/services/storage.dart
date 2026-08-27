@@ -26,6 +26,8 @@ class Storage {
   static const _kRememberEmail = 'remember_email';
   static const _kRememberPass = 'remember_pass';
   static const _kProgress = 'playback_progress';
+  static const _kThemeChoice = 'theme_choice';
+  static const _kPricing = 'plan_pricing';
 
   // Chaves da versão 1.0.0, removidas na migração.
   static const _kLegacyLive = 'cache_live';
@@ -250,6 +252,26 @@ class Storage {
       );
     }
   }
+
+  // ---------- tema (claro / escuro / do sistema) ----------
+  String? get themeChoice => _p.getString(_kThemeChoice);
+
+  Future<void> saveThemeChoice(String name) =>
+      _p.setString(_kThemeChoice, name);
+
+  // ---------- tabela de preços dos planos (aba Pagamentos) ----------
+  Pricing get pricing {
+    final raw = _p.getString(_kPricing);
+    if (raw == null || raw.isEmpty) return Pricing.empty;
+    try {
+      return Pricing.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } on Exception {
+      return Pricing.empty;
+    }
+  }
+
+  Future<void> savePricing(Pricing p) =>
+      _p.setString(_kPricing, jsonEncode(p.toJson()));
 
   Future<void> clearAll() async {
     await _p.clear();

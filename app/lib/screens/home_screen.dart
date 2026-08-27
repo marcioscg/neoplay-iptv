@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
+import '../services/launcher.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -57,6 +58,7 @@ class HomeScreen extends StatelessWidget {
         ),
         body: Column(
           children: [
+            const _PlanExpiryBanner(),
             if (state.stage == LoadStage.loading) _loadingBar(state),
             Expanded(
               child: TabBarView(
@@ -89,12 +91,104 @@ class HomeScreen extends StatelessWidget {
                 state.progressLabel.isEmpty
                     ? 'Atualizando…'
                     : state.progressLabel,
-                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
               ),
             ),
           ],
         ),
       );
+}
+
+/// Faixa de aviso quando o plano da conta comum está perto de vencer ou venceu.
+class _PlanExpiryBanner extends StatelessWidget {
+  const _PlanExpiryBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final account = state.session?.account;
+    if (state.isMaster || account == null) return const SizedBox.shrink();
+    if (!account.isExpired && !account.isExpiringSoon) {
+      return const SizedBox.shrink();
+    }
+
+    final expired = account.isExpired;
+    final days = account.daysLeft ?? 0;
+    final msg = expired
+        ? 'Seu plano venceu. Renove para voltar a assistir.'
+        : days <= 0
+            ? 'Seu plano vence hoje.'
+            : 'Seu plano vence em $days ${days == 1 ? 'dia' : 'dias'}.';
+
+    return Material(
+      color: expired
+          ? AppColors.bad.withValues(alpha: 0.16)
+          : AppColors.accent.withValues(alpha: 0.16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        child: Row(
+          children: [
+            Icon(expired ? Icons.lock_clock : Icons.schedule,
+                size: 18, color: expired ? AppColors.bad : AppColors.accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(msg,
+                  style: TextStyle(fontSize: 12.5, color: AppColors.text)),
+            ),
+            TextButton(
+              onPressed: () => Launcher.whatsapp(
+                  'Meu plano está vencendo, preciso renovar.'),
+              child: const Text('Renovar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Linha de chips de gênero. Ao tocar, abre a lista daquele gênero cruzando
+/// todas as pastas.
+class _GenreChips extends StatelessWidget {
+  const _GenreChips({required this.source, required this.grid});
+
+  final List<MediaItem> source;
+  final bool grid;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final genres = state.genresFor(source);
+    if (genres.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionLabel('Filtrar por gênero'),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              for (final g in genres)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    label: Text(g),
+                    onPressed: () => _open(
+                      context,
+                      g,
+                      state.inGenre(source, g),
+                      grid: grid,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _ChannelsTab extends StatelessWidget {
@@ -130,6 +224,7 @@ class _ChannelsTab extends StatelessWidget {
           highlight: true,
           onTap: () => _open(context, 'Favoritos', state.favoriteItems),
         ),
+        _GenreChips(source: state.live, grid: false),
         const SectionLabel('Categorias'),
         ...cats.map(
           (c) => CategoryTile(
@@ -179,6 +274,7 @@ class _MoviesTab extends StatelessWidget {
           onTap: () =>
               _open(context, 'Todos os filmes', state.movies, grid: true),
         ),
+        _GenreChips(source: state.movies, grid: true),
         const SectionLabel('Categorias'),
         ...cats.map(
           (c) => CategoryTile(
@@ -225,6 +321,7 @@ class _SeriesTab extends StatelessWidget {
           onTap: () =>
               _open(context, 'Todas as séries', state.series, grid: true),
         ),
+        _GenreChips(source: state.series, grid: true),
         const SectionLabel('Categorias'),
         ...cats.map(
           (c) => CategoryTile(

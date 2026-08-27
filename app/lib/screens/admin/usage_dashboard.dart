@@ -83,10 +83,10 @@ class UsageDashboard extends StatelessWidget {
         ...events.take(40).map((e) => ListTile(
               dense: true,
               leading: Icon(_iconFor(e.kind), size: 18, color: AppColors.muted),
-              title: Text(e.title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              title: Text(e.fullTitle,
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text(
-                '${e.userName.isEmpty ? e.userEmail : e.userName} · ${_stamp(e.watchedAt)}',
+                '${_kindLabel(e.kind)} · ${e.userName.isEmpty ? e.userEmail : e.userName} · ${_stamp(e.watchedAt)}',
                 style: const TextStyle(fontSize: 11),
               ),
             )),
@@ -106,6 +106,12 @@ class UsageDashboard extends StatelessWidget {
         MediaKind.live => Icons.live_tv,
         MediaKind.movie => Icons.movie_outlined,
         MediaKind.series => Icons.video_library_outlined,
+      };
+
+  static String _kindLabel(MediaKind k) => switch (k) {
+        MediaKind.live => 'Canal',
+        MediaKind.movie => 'Filme',
+        MediaKind.series => 'Série',
       };
 
   static String _stamp(DateTime d) {
@@ -146,15 +152,14 @@ class _BarRow extends StatelessWidget {
                 ),
               ),
               Text('$value',
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.accent)),
+                  style: TextStyle(fontSize: 12, color: AppColors.accent)),
             ],
           ),
           if (sub != null)
             Text(sub!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 10.5, color: AppColors.muted)),
+                style: TextStyle(fontSize: 10.5, color: AppColors.muted)),
           const SizedBox(height: 5),
           ClipRRect(
             borderRadius: BorderRadius.circular(3),

@@ -28,6 +28,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
   late UserStatus _status = widget.user?.status ?? UserStatus.active;
   bool _obscure = true;
   bool _busy = false;
+  bool _renewNow = false;
   String? _error;
 
   bool get _isEdit => widget.user != null;
@@ -61,8 +62,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
 
     final now = DateTime.now();
     final base = widget.user;
-    final expiresAt =
-        _plan.days == null ? null : now.add(Duration(days: _plan.days!));
+    final expiresAt = _resolveExpiry(base, now);
 
     final user = AdminUser(
       id: base?.id ?? 'u${now.microsecondsSinceEpoch}',
@@ -74,6 +74,8 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       status: _status,
       createdAt: base?.createdAt ?? now,
       expiresAt: expiresAt,
+      lastDevice: base?.lastDevice ?? '',
+      lastSeenAt: base?.lastSeenAt,
     );
 
     setState(() {
@@ -91,6 +93,24 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
         _error = _friendly('$e');
       });
     }
+  }
+
+  /// Regras de vencimento:
+  /// - conta nova: hoje + duração do plano;
+  /// - vitalício: sem data;
+  /// - editando e marcou "renovar agora": um período a partir da validade atual;
+  /// - editando e trocou o plano: recalcula a partir de hoje;
+  /// - editando sem mexer: mantém a data que já estava.
+  DateTime? _resolveExpiry(AdminUser? base, DateTime now) {
+    if (_plan.days == null) return null;
+    if (base == null) return now.add(Duration(days: _plan.days!));
+    if (_renewNow) {
+      return base.copyWith(plan: _plan).renewedExpiry(from: now);
+    }
+    if (_plan != base.plan || base.expiresAt == null) {
+      return now.add(Duration(days: _plan.days!));
+    }
+    return base.expiresAt;
   }
 
   String _friendly(String raw) {
@@ -184,10 +204,11 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
             ],
             onChanged: (v) => setState(() => _status = v ?? _status),
           ),
+          if (_isEdit) _renewalSection(),
           if (_error != null) ...[
             const SizedBox(height: 14),
             Text(_error!,
-                style: const TextStyle(fontSize: 12.5, color: AppColors.bad)),
+                style: TextStyle(fontSize: 12.5, color: AppColors.bad)),
           ],
           const SizedBox(height: 22),
           FilledButton(
@@ -199,7 +220,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
                     : 'Criar conta'),
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'A pessoa entra no app com este e-mail e senha. A lista M3U é '
             'carregada automaticamente no aparelho dela.',
             style: TextStyle(fontSize: 11, color: AppColors.muted, height: 1.4),
@@ -208,6 +229,80 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       ),
     );
   }
+
+  Widget _renewalSection() {
+    final u = widget.user!;
+    final expired = u.isExpired;
+    final validade = u.plan == UserPlan.vitalicio
+        ? 'Plano vitalício'
+        : u.expiresAt == null
+            ? 'Sem validade definida'
+            : '${expired ? 'Venceu' : 'Vence'} em ${_date(u.expiresAt!)}';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.surface2,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.event_available_outlined,
+                        size: 16,
+                        color: expired ? AppColors.bad : AppColors.muted),
+                    const SizedBox(width: 8),
+                    Text(validade,
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            color: expired ? AppColors.bad : AppColors.text)),
+                  ],
+                ),
+                if (u.lastDevice.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.smartphone,
+                          size: 16, color: AppColors.muted),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${u.lastDevice}'
+                          '${u.lastSeenAt != null ? ' · último acesso ${_date(u.lastSeenAt!)}' : ''}',
+                          style: TextStyle(
+                              fontSize: 11.5, color: AppColors.muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (u.plan != UserPlan.vitalicio)
+            CheckboxListTile(
+              value: _renewNow,
+              onChanged: (v) => setState(() => _renewNow = v ?? false),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              title: const Text('Renovar por mais um período ao salvar',
+                  style: TextStyle(fontSize: 13)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _date(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   Widget _field(
     String label,

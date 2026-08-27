@@ -60,7 +60,7 @@ class CatMark extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(size * 0.28),
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [AppColors.accent, AppColors.accent2],
@@ -203,7 +203,7 @@ class MediaTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: AppColors.surface1,
           border: Border(bottom: BorderSide(color: AppColors.line)),
         ),
@@ -228,8 +228,7 @@ class MediaTile extends StatelessWidget {
                     item.group,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        const TextStyle(fontSize: 11.5, color: AppColors.muted),
+                    style: TextStyle(fontSize: 11.5, color: AppColors.muted),
                   ),
                 ],
               ),
@@ -275,7 +274,7 @@ class CategoryTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: AppColors.surface1,
           border: Border(bottom: BorderSide(color: AppColors.line)),
         ),
@@ -353,13 +352,69 @@ class EmptyState extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 13, color: AppColors.muted, height: 1.5),
               ),
             ],
             if (action != null) ...[const SizedBox(height: 20), action!],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Barra horizontal proporcional com rótulo e valor à direita. Usada nos
+/// gráficos simples do painel (central de uso e faturamento).
+class MiniBar extends StatelessWidget {
+  const MiniBar({
+    super.key,
+    required this.label,
+    required this.amount,
+    required this.max,
+    required this.display,
+    this.sub,
+  });
+
+  final String label;
+  final String? sub;
+
+  /// Valor desta barra e o maior valor do conjunto (para a proporção).
+  final double amount;
+  final double max;
+
+  /// Texto mostrado à direita (ex.: "R$ 120,00" ou "8").
+  final String display;
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = max <= 0 ? 0.0 : (amount / max).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13)),
+              ),
+              Text(display,
+                  style: TextStyle(fontSize: 12, color: AppColors.accent)),
+            ],
+          ),
+          if (sub != null)
+            Text(sub!,
+                style: TextStyle(fontSize: 10.5, color: AppColors.muted)),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(value: ratio, minHeight: 5),
+          ),
+        ],
       ),
     );
   }

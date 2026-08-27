@@ -384,7 +384,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           actions: [
             IconButton(
               tooltip: 'Parar transmissão',
-              icon: const Icon(Icons.cast_connected, color: AppColors.accent),
+              icon: Icon(Icons.cast_connected, color: AppColors.accent),
               onPressed: _stopCast,
             ),
           ],
@@ -462,12 +462,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, color: AppColors.bad, size: 30),
+                Icon(Icons.error_outline, color: AppColors.bad, size: 30),
                 const SizedBox(height: 10),
                 Text(
                   _error!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 12.5, color: AppColors.muted, height: 1.4),
                 ),
                 const SizedBox(height: 12),
@@ -650,10 +650,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             child: VideoProgressIndicator(
                               c,
                               allowScrubbing: true,
-                              colors: const VideoProgressColors(
+                              colors: VideoProgressColors(
                                 playedColor: AppColors.accent,
-                                bufferedColor: Color(0x55FFFFFF),
-                                backgroundColor: Color(0x33FFFFFF),
+                                bufferedColor: const Color(0x55FFFFFF),
+                                backgroundColor: const Color(0x33FFFFFF),
                               ),
                             ),
                           ),
@@ -808,8 +808,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   valueListenable: c,
                   builder: (_, value, __) => Text(
                     _fmt(value.position),
-                    style:
-                        const TextStyle(fontSize: 12, color: AppColors.accent),
+                    style: TextStyle(fontSize: 12, color: AppColors.accent),
                   ),
                 ),
             ],
@@ -819,9 +818,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             VideoProgressIndicator(
               c,
               allowScrubbing: true,
-              colors: const VideoProgressColors(
+              colors: VideoProgressColors(
                 playedColor: AppColors.accent,
-                bufferedColor: Color(0x33FFFFFF),
+                bufferedColor: const Color(0x33FFFFFF),
                 backgroundColor: AppColors.surface3,
               ),
             ),
@@ -919,7 +918,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return Container(
           decoration: BoxDecoration(
             color: now ? const Color(0x12FFC93C) : AppColors.surface1,
-            border: const Border(bottom: BorderSide(color: AppColors.line)),
+            border: Border(bottom: BorderSide(color: AppColors.line)),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
@@ -929,8 +928,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 width: 46,
                 child: Text(
                   p.start == null ? '--:--' : _hhmm(p.start!),
-                  style:
-                      const TextStyle(fontSize: 11.5, color: AppColors.muted),
+                  style: TextStyle(fontSize: 11.5, color: AppColors.muted),
                 ),
               ),
               Expanded(

@@ -36,9 +36,17 @@ abstract class AccountsRepository {
   /// Dispara e-mail de redefinição de senha (no-op no modo local).
   Future<void> sendPasswordReset(String email);
 
+  /// Registra o aparelho e o momento do último acesso de uma conta.
+  /// No modo local não cruza aparelhos — fica só neste.
+  Future<void> reportDevice(String userId, String device);
+
   List<UsageEvent> get events;
   Future<void> recordEvent(UsageEvent event);
   Future<void> clearEvents();
+
+  /// Tabela de preços dos planos, compartilhada entre os aparelhos do master.
+  Pricing get pricing;
+  Future<void> savePricing(Pricing pricing);
 }
 
 /// Tudo neste aparelho, via [Storage]/SharedPreferences.
@@ -73,6 +81,21 @@ class LocalAccountsRepository implements AccountsRepository {
 
   @override
   Future<void> sendPasswordReset(String email) async {}
+
+  @override
+  Future<void> reportDevice(String userId, String device) async {
+    final list = users.toList();
+    final i = list.indexWhere((u) => u.id == userId);
+    if (i < 0) return;
+    list[i] = list[i].copyWith(lastDevice: device, lastSeenAt: DateTime.now());
+    await _storage.saveAdminUsers(list);
+  }
+
+  @override
+  Pricing get pricing => _storage.pricing;
+
+  @override
+  Future<void> savePricing(Pricing pricing) => _storage.savePricing(pricing);
 
   @override
   List<AdminUser> get users => _storage.adminUsers;

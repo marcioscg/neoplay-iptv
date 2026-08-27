@@ -22,8 +22,10 @@ class FirebaseAccountsRepository implements AccountsRepository {
   void Function()? _onChanged;
   List<AdminUser> _users = const [];
   List<UsageEvent> _events = const [];
+  Pricing _pricing = Pricing.empty;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _eventsSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _pricingSub;
 
   @override
   Future<void> init({void Function()? onChanged}) async {
@@ -32,6 +34,15 @@ class FirebaseAccountsRepository implements AccountsRepository {
   }
 
   void _attachListeners() {
+    _pricingSub ??= _db.collection('config').doc('pricing').snapshots().listen(
+      (snap) {
+        final data = snap.data();
+        if (data != null) _pricing = Pricing.fromJson(data);
+        _onChanged?.call();
+      },
+      onError: (Object _) {},
+    );
+
     _usersSub ??= _db
         .collection('users')
         .where('deleted', isEqualTo: false)
@@ -114,11 +125,38 @@ class FirebaseAccountsRepository implements AccountsRepository {
   Future<void> signOut() async {
     await _usersSub?.cancel();
     await _eventsSub?.cancel();
+    await _pricingSub?.cancel();
     _usersSub = null;
     _eventsSub = null;
+    _pricingSub = null;
     _users = const [];
     _events = const [];
+    _pricing = Pricing.empty;
     await _auth.signOut();
+  }
+
+  @override
+  Future<void> reportDevice(String userId, String device) async {
+    try {
+      await _db.collection('users').doc(userId).set(
+        {'lastDevice': device, 'lastSeenAt': DateTime.now().toIso8601String()},
+        SetOptions(merge: true),
+      );
+    } on FirebaseException {
+      // Sem permissão / offline: não é crítico.
+    }
+  }
+
+  @override
+  Pricing get pricing => _pricing;
+
+  @override
+  Future<void> savePricing(Pricing pricing) async {
+    _pricing = pricing;
+    await _db
+        .collection('config')
+        .doc('pricing')
+        .set(pricing.toJson(), SetOptions(merge: true));
   }
 
   @override
@@ -210,6 +248,10 @@ class FirebaseAccountsRepository implements AccountsRepository {
             DateTime.tryParse((d['createdAt'] ?? '') as String) ?? DateTime.now(),
         expiresAt: d['expiresAt'] != null
             ? DateTime.tryParse(d['expiresAt'] as String)
+            : null,
+        lastDevice: (d['lastDevice'] ?? '') as String,
+        lastSeenAt: d['lastSeenAt'] != null
+            ? DateTime.tryParse(d['lastSeenAt'] as String)
             : null,
       );
 }
