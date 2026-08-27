@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -23,10 +24,16 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache.maximumSize = 220;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
 
+  try {
+    await Firebase.initializeApp();
+  } on Object catch (e) {
+    debugPrint('Firebase indisponível: $e');
+  }
+
   await CastService.instance.init();
 
   final storage = await Storage.open();
-  final accounts = LocalAccountsRepository(storage);
+  final AccountsRepository accounts = LocalAccountsRepository(storage);
   runApp(MiauNetApp(storage: storage, accounts: accounts));
 }
 
