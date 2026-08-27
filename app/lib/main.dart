@@ -28,7 +28,19 @@ Future<void> main() async {
   var firebaseOk = false;
   try {
     await Firebase.initializeApp();
-    firebaseOk = true;
+    final o = Firebase.app().options;
+    // O CI grava um google-services.json de placeholder quando o secret
+    // GOOGLE_SERVICES_JSON_BASE64 não está configurado. Nesse caso o
+    // initializeApp passa, mas toda chamada de Auth falha com "API key not
+    // valid" — melhor cair no modo local do que travar o login.
+    final placeholder = o.projectId == 'placeholder' ||
+        o.apiKey == 'placeholder' ||
+        o.apiKey.isEmpty ||
+        o.projectId.isEmpty;
+    firebaseOk = !placeholder;
+    if (placeholder) {
+      debugPrint('google-services.json é placeholder: usando modo local.');
+    }
   } on Object catch (e) {
     debugPrint('Firebase indisponível, usando modo local: $e');
   }
