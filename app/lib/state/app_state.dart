@@ -158,7 +158,7 @@ class AppState extends ChangeNotifier {
   Future<ImportResult> _importM3u(Playlist p) async {
     _progress('Baixando a lista M3U…');
     final res = await http.get(Uri.parse(p.url), headers: const {
-      'User-Agent': 'NEOPLAY/1.0 (Android)',
+      'User-Agent': 'MIAUNET/1.0 (Android)',
       'Accept-Encoding': 'gzip',
     }).timeout(const Duration(seconds: 90));
 

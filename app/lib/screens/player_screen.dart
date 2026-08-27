@@ -116,7 +116,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final controller = VideoPlayerController.networkUrl(
       Uri.parse(item.url),
-      httpHeaders: const {'User-Agent': 'NEOPLAY/1.0 (Android)'},
+      httpHeaders: const {'User-Agent': 'MIAUNET/1.0 (Android)'},
       videoPlayerOptions: VideoPlayerOptions(allowBackgroundPlayback: false),
     );
 

@@ -3,53 +3,117 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../theme.dart';
 
-/// Marca do app.
-class NeoLogo extends StatelessWidget {
-  const NeoLogo({super.key, this.size = 18});
+/// Marca do app: gatinho estilizado + "MIAU NET".
+class MiauLogo extends StatelessWidget {
+  const MiauLogo({super.key, this.size = 18, this.showWordmark = true});
+
+  final double size;
+  final bool showWordmark;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = size * 1.45;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CatMark(size: badge),
+        if (showWordmark) ...[
+          SizedBox(width: size * 0.42),
+          Text.rich(
+            TextSpan(children: [
+              TextSpan(
+                text: 'MIAU',
+                style: TextStyle(
+                  fontSize: size,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                  color: AppColors.text,
+                ),
+              ),
+              TextSpan(
+                text: ' NET',
+                style: TextStyle(
+                  fontSize: size,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                  color: AppColors.accent,
+                ),
+              ),
+            ]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Selo do gatinho, usado no logo e na tela de login.
+class CatMark extends StatelessWidget {
+  const CatMark({super.key, this.size = 28});
+
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text.rich(
-          TextSpan(children: [
-            TextSpan(
-              text: 'NEO',
-              style: TextStyle(
-                fontSize: size,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.2,
-                color: AppColors.text,
-              ),
-            ),
-            TextSpan(
-              text: 'PLAY',
-              style: TextStyle(
-                fontSize: size,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.2,
-                color: AppColors.accent,
-              ),
-            ),
-          ]),
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * 0.28),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.accent, AppColors.accent2],
         ),
-        SizedBox(width: size * 0.3),
-        Container(
-          width: size * 0.8,
-          height: size * 0.8,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient:
-                LinearGradient(colors: [AppColors.accent, AppColors.accent2]),
-          ),
-          child: Icon(Icons.play_arrow_rounded,
-              size: size * 0.6, color: AppColors.bg),
-        ),
-      ],
+      ),
+      child: CustomPaint(painter: _CatFacePainter()),
     );
   }
+}
+
+class _CatFacePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final dark = Paint()
+      ..color = AppColors.bg
+      ..isAntiAlias = true;
+    final cx = w * 0.5;
+    final cy = h * 0.58;
+    final r = w * 0.29;
+
+    final ears = Path()
+      ..moveTo(cx - r * 1.05, cy - r * 0.5)
+      ..lineTo(w * 0.2, h * 0.14)
+      ..lineTo(cx - r * 0.1, cy - r * 0.85)
+      ..close()
+      ..moveTo(cx + r * 1.05, cy - r * 0.5)
+      ..lineTo(w * 0.8, h * 0.14)
+      ..lineTo(cx + r * 0.1, cy - r * 0.85)
+      ..close();
+    canvas.drawPath(ears, dark);
+    canvas.drawCircle(Offset(cx, cy), r, dark);
+
+    final glow = Paint()..color = AppColors.accent;
+    canvas.drawCircle(Offset(cx - r * 0.4, cy - r * 0.05), r * 0.13, glow);
+    canvas.drawCircle(Offset(cx + r * 0.4, cy - r * 0.05), r * 0.13, glow);
+
+    final whisker = Paint()
+      ..color = AppColors.accent
+      ..strokeWidth = w * 0.022
+      ..strokeCap = StrokeCap.round;
+    for (var i = -1; i <= 1; i++) {
+      final dy = cy + r * 0.2 + i * r * 0.26;
+      canvas.drawLine(
+          Offset(cx - r * 0.5, dy), Offset(cx - r * 1.3, dy - i * r * 0.12), whisker);
+      canvas.drawLine(
+          Offset(cx + r * 0.5, dy), Offset(cx + r * 1.3, dy - i * r * 0.12), whisker);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 /// Miniatura de logo/capa com fallback em gradiente.

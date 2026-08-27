@@ -99,7 +99,7 @@ class _SetupScreenState extends State<SetupScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const NeoLogo(),
+        title: const MiauLogo(),
         bottom: TabBar(
           controller: _tabs,
           tabs: const [

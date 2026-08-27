@@ -21,7 +21,7 @@ class HomeScreen extends StatelessWidget {
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const NeoLogo(),
+          title: const MiauLogo(),
           actions: [
             IconButton(
               tooltip: 'Buscar',

@@ -56,7 +56,7 @@ class _SplashScreenState extends State<SplashScreen> {
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                NeoLogo(size: 30),
+                MiauLogo(size: 30),
                 SizedBox(height: 22),
                 SizedBox(
                   width: 130,
@@ -72,7 +72,7 @@ class _SplashScreenState extends State<SplashScreen> {
             Positioned(
               bottom: 40,
               child: Text(
-                'v1.0.2',
+                'v1.0.3',
                 style: TextStyle(fontSize: 11, color: Color(0xFF4D5464)),
               ),
             ),

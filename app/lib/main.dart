@@ -35,7 +35,7 @@ class NeoplayApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppState(storage),
       child: MaterialApp(
-        title: 'MIAUNET',
+        title: 'MIAU NET',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
         home: const RootGate(),

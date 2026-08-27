@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- orelhas -->
+    <path
+        android:fillColor="#07080B"
+        android:pathData="M39,45 L30,23 L54,39 Z" />
+    <path
+        android:fillColor="#07080B"
+        android:pathData="M69,45 L78,23 L54,39 Z" />
+
+    <!-- rosto -->
+    <path
+        android:fillColor="#07080B"
+        android:pathData="M54,60 m-21,0 a21,21 0 1,0 42,0 a21,21 0 1,0 -42,0 Z" />
+
+    <!-- olhos -->
+    <path
+        android:fillColor="#FFC93C"
+        android:pathData="M45,57 m-3.4,0 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0 Z" />
+    <path
+        android:fillColor="#FFC93C"
+        android:pathData="M63,57 m-3.4,0 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0 Z" />
+
+    <!-- bigodes -->
+    <path
+        android:strokeColor="#FFC93C"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M50,66 L33,63 M50,70 L34,72 M58,66 L75,63 M58,70 L74,72" />
+</vector>

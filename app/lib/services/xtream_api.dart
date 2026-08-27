@@ -25,7 +25,7 @@ class XtreamApi {
 
   Future<dynamic> _get(Uri uri) async {
     final res = await http.get(uri, headers: const {
-      'User-Agent': 'NEOPLAY/1.0 (Android)',
+      'User-Agent': 'MIAUNET/1.0 (Android)',
     }).timeout(_timeout);
     if (res.statusCode != 200) {
       throw XtreamException('Servidor respondeu ${res.statusCode}');
@@ -72,7 +72,7 @@ class XtreamApi {
   Future<String> rawBody(String action, {bool optional = false}) async {
     try {
       final res = await http.get(_api(action), headers: const {
-        'User-Agent': 'NEOPLAY/1.0 (Android)',
+        'User-Agent': 'MIAUNET/1.0 (Android)',
         'Accept-Encoding': 'gzip',
       }).timeout(_bigTimeout);
       if (res.statusCode != 200) {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Paleta do NEOPLAY (mesma do mapa de telas).
+/// Paleta do MIAU NET (mesma do mapa de telas).
 class AppColors {
   static const bg = Color(0xFF07080B);
   static const card = Color(0xFF101218);
