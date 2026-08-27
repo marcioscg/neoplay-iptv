@@ -6,11 +6,25 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
+import '../services/accounts_repository.dart';
 import '../services/importer.dart';
+import '../services/parental.dart';
 import '../services/storage.dart';
 import '../services/xtream_api.dart';
 
 enum LoadStage { idle, loading, ready, error }
+
+/// Sessão ativa. [isMaster] abre o painel de controle; contas comuns recebem a
+/// lista M3U cadastrada pelo master.
+class SessionUser {
+  final String email;
+  final bool isMaster;
+  final AdminUser? account;
+  const SessionUser({required this.email, this.isMaster = false, this.account});
+
+  String get displayName =>
+      account?.name.isNotEmpty == true ? account!.name : (isMaster ? 'Master' : email);
+}
 
 /// Estado global do app: lista ativa, conteúdo importado, favoritos e busca.
 ///
@@ -19,9 +33,12 @@ enum LoadStage { idle, loading, ready, error }
 /// pré-calculados, para que nenhuma tela precise varrer milhares de itens a
 /// cada frame.
 class AppState extends ChangeNotifier {
-  AppState(this._storage);
+  AppState(this._storage, this._accounts);
 
   final Storage _storage;
+  final AccountsRepository _accounts;
+
+  AccountsRepository get accounts => _accounts;
 
   Playlist? playlist;
   LoadStage stage = LoadStage.idle;
@@ -46,8 +63,22 @@ class AppState extends ChangeNotifier {
   Map<String, List<MediaItem>> _seriesByGroup = const {};
   List<String> _recentIds = const [];
 
+  // Episódios M3U agrupados por série (id do container -> episódios).
+  Map<String, List<MediaItem>> _m3uEpisodes = const {};
+
   bool _busy = false;
   bool _booted = false;
+
+  // ---------- sessão ----------
+  SessionUser? session;
+  bool masterAppMode = false;
+  AdminUser? _pendingAccount;
+
+  bool get isLogged => session != null;
+  bool get isMaster => session?.isMaster ?? false;
+
+  // ---------- controle parental ----------
+  bool _adultUnlocked = false;
 
   bool get hasPlaylist => playlist != null;
   bool get isBusy => _busy;
@@ -56,6 +87,9 @@ class AppState extends ChangeNotifier {
   Future<void> bootstrap() async {
     if (_booted) return;
     _booted = true;
+
+    await _accounts.init();
+    await _tryAutoLogin();
 
     playlist = _storage.playlist;
     favorites = _storage.favorites;
@@ -71,6 +105,13 @@ class AppState extends ChangeNotifier {
       stage = LoadStage.ready;
     }
     notifyListeners();
+
+    // Conta comum lembrada: garante que a lista dela esteja carregada.
+    final pending = _pendingAccount;
+    _pendingAccount = null;
+    if (pending != null) {
+      unawaited(_applyAccountPlaylist(pending));
+    }
   }
 
   /// Salva uma nova lista e importa o conteúdo.
@@ -192,8 +233,21 @@ class AppState extends ChangeNotifier {
   void _apply(PlaylistContent content) {
     live = content.live;
     movies = content.movies;
-    series = content.series;
-    _all = [...live, ...movies, ...series];
+
+    // Listas M3U trazem episódios soltos; agrupamos por série para a aba Séries
+    // mostrar containers (capa + temporadas), como no Xtream.
+    final rawSeries = content.series;
+    if (rawSeries.isNotEmpty && rawSeries.any((e) => e.url.isNotEmpty)) {
+      final built = _buildM3uSeries(rawSeries);
+      series = built.$1;
+      _m3uEpisodes = built.$2;
+    } else {
+      series = rawSeries;
+      _m3uEpisodes = const {};
+    }
+
+    final episodePool = _m3uEpisodes.values.expand((e) => e).toList();
+    _all = [...live, ...movies, ...series, ...episodePool];
 
     _byId = {for (final e in _all) e.id: e};
     _liveByGroup = _group(live);
@@ -203,6 +257,134 @@ class AppState extends ChangeNotifier {
     _movieCategories = _categories(_movieByGroup);
     _seriesCategories = _categories(_seriesByGroup);
     _recentIds = _recentIds.where(_byId.containsKey).toList();
+    _seriesCache.clear();
+  }
+
+  // ---------- agrupamento de séries M3U ----------
+  static final _epPatterns = <RegExp>[
+    RegExp(r'^(.*?)[\s._-]+[sS](\d{1,2})[\s._-]*[eExX](\d{1,3})'),
+    RegExp(r'^(.*?)[\s._-]+(\d{1,2})[xX](\d{1,3})\b'),
+    RegExp(
+        r'^(.*?)[\s._-]+[tT](?:emporada)?[\s._-]*(\d{1,2})[\s._-]+[eE][pP]?(?:is[oó]dio)?[\s._-]*(\d{1,3})'),
+  ];
+  static final _epOnly =
+      RegExp(r'^(.*?)[\s._-]+[eE][pP]?(?:is[oó]dio)?[\s._-]*(\d{1,3})\b');
+  static final _noise = RegExp(
+    r'\b(1080p|720p|480p|360p|4k|uhd|fhd|hdr|hd|sd|h ?264|h ?265|x264|x265|10bit|dual|dublado|dub|leg|legendado|nacional|web-?dl|web-?rip|bluray|hdtv)\b',
+    caseSensitive: false,
+  );
+
+  ({String show, int season, int number}) _parseEpisode(String raw) {
+    final name = raw.trim();
+    for (final p in _epPatterns) {
+      final m = p.firstMatch(name);
+      if (m != null) {
+        return (
+          show: _clean(m.group(1)!),
+          season: int.tryParse(m.group(2)!) ?? 1,
+          number: int.tryParse(m.group(3)!) ?? 0,
+        );
+      }
+    }
+    final only = _epOnly.firstMatch(name);
+    if (only != null) {
+      return (
+        show: _clean(only.group(1)!),
+        season: 1,
+        number: int.tryParse(only.group(2)!) ?? 0,
+      );
+    }
+    return (show: _clean(name), season: 1, number: 0);
+  }
+
+  String _clean(String s) => s
+      .replaceAll(RegExp(r'[\[(].*?[\])]'), ' ')
+      .replaceAll(_noise, ' ')
+      .replaceAll(RegExp(r'[\s._-]+$'), '')
+      .replaceAll(RegExp(r'^[\s._-]+'), '')
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
+
+  String _normShow(String s) {
+    final n = s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    return n.isEmpty ? 'serie' : n;
+  }
+
+  (List<MediaItem>, Map<String, List<MediaItem>>) _buildM3uSeries(
+      List<MediaItem> eps) {
+    final groups = <String, List<MediaItem>>{};
+    final showName = <String, String>{};
+    final showLogo = <String, String>{};
+    final showGroup = <String, String>{};
+
+    for (final e in eps) {
+      final parsed = _parseEpisode(e.name);
+      final display = parsed.show.isEmpty ? e.group : parsed.show;
+      final key = _normShow(display);
+      (groups[key] ??= <MediaItem>[]).add(e);
+      showName.putIfAbsent(key, () => display);
+      showGroup.putIfAbsent(key, () => e.group);
+      if ((showLogo[key] ?? '').isEmpty && e.logo.isNotEmpty) {
+        showLogo[key] = e.logo;
+      }
+    }
+
+    final keys = groups.keys.toList()
+      ..sort((a, b) =>
+          showName[a]!.toLowerCase().compareTo(showName[b]!.toLowerCase()));
+
+    final containers = <MediaItem>[];
+    final episodesById = <String, List<MediaItem>>{};
+    for (final key in keys) {
+      final id = 'm3useries_$key';
+      containers.add(MediaItem(
+        id: id,
+        name: showName[key]!,
+        url: '',
+        logo: showLogo[key] ?? '',
+        group: showGroup[key]!,
+        kind: MediaKind.series,
+      ));
+      episodesById[id] = groups[key]!;
+    }
+    return (containers, episodesById);
+  }
+
+  SeriesDetail _seriesFromEpisodes(MediaItem container, List<MediaItem> eps) {
+    final bySeason = <int, List<SeriesEpisode>>{};
+    for (var i = 0; i < eps.length; i++) {
+      final e = eps[i];
+      final parsed = _parseEpisode(e.name);
+      final number = parsed.number == 0 ? i + 1 : parsed.number;
+      (bySeason[parsed.season] ??= <SeriesEpisode>[]).add(SeriesEpisode(
+        id: e.id,
+        title: _episodeTitle(e.name, container.name),
+        url: e.url,
+        image: e.logo.isNotEmpty ? e.logo : container.logo,
+        season: parsed.season,
+        number: number,
+      ));
+    }
+    final keys = bySeason.keys.toList()..sort();
+    return SeriesDetail(
+      cover: container.logo,
+      seasons: [
+        for (final n in keys)
+          SeriesSeason(
+            n,
+            bySeason[n]!..sort((a, b) => a.number.compareTo(b.number)),
+          ),
+      ],
+    );
+  }
+
+  String _episodeTitle(String raw, String show) {
+    var t = raw.trim();
+    if (show.isNotEmpty && t.toLowerCase().startsWith(show.toLowerCase())) {
+      t = t.substring(show.length);
+    }
+    t = t.replaceAll(RegExp(r'^[\s._:\-]+'), '').trim();
+    return t.isEmpty ? raw.trim() : t;
   }
 
   Map<String, List<MediaItem>> _group(List<MediaItem> items) {
@@ -222,10 +404,47 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- consultas (todas O(1) ou sobre listas já prontas) ----------
-  List<MediaCategory> get liveCategories => _liveCategories;
-  List<MediaCategory> get movieCategories => _movieCategories;
-  List<MediaCategory> get seriesCategories => _seriesCategories;
+  List<MediaCategory> get liveCategories => _visibleCats(_liveCategories);
+  List<MediaCategory> get movieCategories => _visibleCats(_movieCategories);
+  List<MediaCategory> get seriesCategories => _visibleCats(_seriesCategories);
   List<MediaItem> get allItems => _all;
+
+  // Controle parental: quando ativo, categorias adultas somem da navegação
+  // (se "ocultar" estiver ligado) ou aparecem com cadeado até liberar o PIN.
+  bool get parentalActive => _storage.parentalEnabled;
+  bool get hideAdult => _storage.hideAdult;
+  bool get adultUnlocked => _adultUnlocked;
+  bool get _filterAdult => parentalActive && hideAdult && !_adultUnlocked;
+
+  bool isAdultGroup(String group) => Parental.isAdult(group);
+  bool isGroupLocked(String group) =>
+      parentalActive && !_adultUnlocked && Parental.isAdult(group);
+
+  List<MediaCategory> _visibleCats(List<MediaCategory> all) {
+    if (!_filterAdult) return all;
+    return all.where((c) => !Parental.isAdult(c.name)).toList();
+  }
+
+  void unlockAdultSession() {
+    _adultUnlocked = true;
+    notifyListeners();
+  }
+
+  void lockAdultSession() {
+    _adultUnlocked = false;
+    notifyListeners();
+  }
+
+  Future<void> setParentalEnabled(bool enabled) async {
+    await _storage.saveParentalEnabled(enabled);
+    if (!enabled) _adultUnlocked = false;
+    notifyListeners();
+  }
+
+  Future<void> setHideAdult(bool hide) async {
+    await _storage.saveHideAdult(hide);
+    notifyListeners();
+  }
 
   List<MediaItem> inCategory(List<MediaItem> items, String category) {
     final source = items == live
@@ -254,8 +473,10 @@ class AppState extends ChangeNotifier {
   List<MediaItem> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.length < 2) return const [];
+    final filterAdult = _filterAdult;
     final out = <MediaItem>[];
     for (final item in _all) {
+      if (filterAdult && Parental.isAdult(item.group)) continue;
       if (item.name.toLowerCase().contains(q)) {
         out.add(item);
         if (out.length >= 300) break;
@@ -271,73 +492,24 @@ class AppState extends ChangeNotifier {
     final cached = _seriesCache[item.id];
     if (cached != null) return cached;
 
+    // Séries de lista M3U: episódios já agrupados na importação.
+    final local = _m3uEpisodes[item.id];
+    if (local != null && local.isNotEmpty) {
+      final detail = _seriesFromEpisodes(item, local);
+      _seriesCache[item.id] = detail;
+      return detail;
+    }
+
     final p = playlist;
     if (p != null && p.kind == PlaylistKind.xtream) {
-      try {
-        final detail = await XtreamApi(p).seriesInfo(item.remoteId);
-        if (detail.seasons.isNotEmpty) {
-          _seriesCache[item.id] = detail;
-          return detail;
-        }
-        if (item.isSeriesContainer) {
-          throw const XtreamException('Esta série não retornou episódios');
-        }
-      } on XtreamException {
-        if (item.isSeriesContainer) rethrow;
+      final detail = await XtreamApi(p).seriesInfo(item.remoteId);
+      if (detail.seasons.isNotEmpty) {
+        _seriesCache[item.id] = detail;
+        return detail;
       }
     }
 
-    final fromCatalog = _seriesFromCatalog(item);
-    if (fromCatalog.seasons.isNotEmpty) {
-      _seriesCache[item.id] = fromCatalog;
-      return fromCatalog;
-    }
-
-    throw const XtreamException(
-      'Temporadas só estão disponíveis em listas Xtream Codes',
-    );
-  }
-
-  static final _episodeLabel = RegExp(
-    r'(?:[sS]|[tT])(\d{1,2})\s*[eE](\d{1,3})',
-  );
-
-  SeriesDetail _seriesFromCatalog(MediaItem item) {
-    final pool = series
-        .where((e) =>
-            e.url.isNotEmpty &&
-            (e.group == item.group || e.id == item.id))
-        .toList();
-    if (pool.isEmpty) return const SeriesDetail();
-
-    final bySeason = <int, List<SeriesEpisode>>{};
-    for (var i = 0; i < pool.length; i++) {
-      final e = pool[i];
-      final match = _episodeLabel.firstMatch(e.name);
-      final season = match == null ? 1 : int.parse(match.group(1)!);
-      final number = match == null ? i + 1 : int.parse(match.group(2)!);
-      (bySeason[season] ??= <SeriesEpisode>[]).add(
-        SeriesEpisode(
-          id: e.id,
-          title: e.name,
-          url: e.url,
-          image: e.logo,
-          season: season,
-          number: number,
-        ),
-      );
-    }
-    final keys = bySeason.keys.toList()..sort();
-    return SeriesDetail(
-      cover: item.logo,
-      seasons: [
-        for (final n in keys)
-          SeriesSeason(
-            n,
-            bySeason[n]!..sort((a, b) => a.number.compareTo(b.number)),
-          ),
-      ],
-    );
+    throw const XtreamException('Esta série não retornou episódios');
   }
 
   bool isFavorite(MediaItem item) => favorites.contains(item.id);
@@ -357,6 +529,26 @@ class AppState extends ChangeNotifier {
     _recentIds = list;
     notifyListeners();
     await _storage.saveRecent(list);
+    _recordUsage(item);
+  }
+
+  void _recordUsage(MediaItem item) {
+    if (item.url.isEmpty) return; // container de série, não conta
+    final s = session;
+    final email = s == null
+        ? 'local'
+        : s.isMaster
+            ? kMasterEmail
+            : s.email;
+    unawaited(_accounts.recordEvent(UsageEvent(
+      userEmail: email,
+      userName: s?.displayName ?? '',
+      mediaId: item.id,
+      title: item.name,
+      group: item.group,
+      kind: item.kind,
+      watchedAt: DateTime.now(),
+    )));
   }
 
   Future<void> clearFavoritesAndHistory() async {
@@ -378,6 +570,9 @@ class AppState extends ChangeNotifier {
     _recentIds = const [];
     _playbackProgress = {};
     _seriesCache.clear();
+    session = null;
+    masterAppMode = false;
+    _adultUnlocked = false;
     _apply(const PlaylistContent());
     stage = LoadStage.idle;
     notifyListeners();
@@ -456,36 +651,111 @@ class AppState extends ChangeNotifier {
     return out;
   }
 
-  // ---------- autenticação e usuários admin ----------
-  AdminUser? get loggedUser => _storage.loggedUser;
+  // ---------- login / sessão ----------
+  Future<String?> login(
+    String email,
+    String password, {
+    required bool remember,
+  }) async {
+    final e = email.trim();
+    if (e.isEmpty || password.isEmpty) return 'Informe e-mail e senha.';
 
-  Future<void> setLoggedUser(AdminUser? user) async {
-    await _storage.saveLoggedUser(user);
+    if (isMasterCredential(e, password)) {
+      session = const SessionUser(email: kMasterEmail, isMaster: true);
+      masterAppMode = false;
+      await _remember(remember, kMasterEmail, password);
+      notifyListeners();
+      return null;
+    }
+
+    final user = _accounts.authenticate(e, password);
+    if (user == null) return 'E-mail ou senha inválidos.';
+    if (!user.isActive) {
+      return 'Conta ${user.status.label.toLowerCase()} ou expirada. Fale com o administrador.';
+    }
+
+    session = SessionUser(email: user.email, account: user);
+    await _remember(remember, e, password);
+    notifyListeners();
+    await _applyAccountPlaylist(user);
+    return null;
+  }
+
+  Future<void> _remember(bool remember, String email, String password) async {
+    if (remember) {
+      await _storage.saveRememberedLogin(email, password);
+    } else {
+      await _storage.clearRememberedLogin();
+    }
+  }
+
+  Future<void> _tryAutoLogin() async {
+    final e = _storage.rememberedEmail;
+    final p = _storage.rememberedPassword;
+    if (e == null || p == null || e.isEmpty) return;
+
+    if (isMasterCredential(e, p)) {
+      session = const SessionUser(email: kMasterEmail, isMaster: true);
+      return;
+    }
+    final user = _accounts.authenticate(e, p);
+    if (user != null && user.isActive) {
+      session = SessionUser(email: user.email, account: user);
+      _pendingAccount = user;
+    }
+  }
+
+  Future<void> _applyAccountPlaylist(AdminUser user) async {
+    final url = user.m3uUrl.trim();
+    if (url.isEmpty) return;
+    final current = _storage.playlist;
+    if (current != null &&
+        current.kind == PlaylistKind.m3u &&
+        current.url == url) {
+      return; // já é a lista certa; o cache carregado basta
+    }
+    await connect(Playlist(
+      name: user.name.isEmpty ? 'Minha lista' : user.name,
+      kind: PlaylistKind.m3u,
+      url: url,
+    ));
+  }
+
+  Future<void> logout() async {
+    await _storage.clearRememberedLogin();
+    session = null;
+    masterAppMode = false;
+    _adultUnlocked = false;
     notifyListeners();
   }
 
-  Future<void> logoutUser() async {
-    await _storage.saveLoggedUser(null);
+  void enterMasterAppMode() {
+    masterAppMode = true;
     notifyListeners();
   }
 
-  List<AdminUser> get adminUsers => _storage.adminUsers;
+  void exitMasterAppMode() {
+    masterAppMode = false;
+    notifyListeners();
+  }
+
+  // ---------- contas (painel de controle) ----------
+  List<AdminUser> get adminUsers => _accounts.users;
 
   Future<void> saveAdminUser(AdminUser user) async {
-    final users = _storage.adminUsers.toList();
-    final index = users.indexWhere((u) => u.id == user.id);
-    if (index >= 0) {
-      users[index] = user;
-    } else {
-      users.add(user);
-    }
-    await _storage.saveAdminUsers(users);
+    await _accounts.saveUser(user);
     notifyListeners();
   }
 
   Future<void> deleteAdminUser(String userId) async {
-    final users = _storage.adminUsers.where((u) => u.id != userId).toList();
-    await _storage.saveAdminUsers(users);
+    await _accounts.deleteUser(userId);
+    notifyListeners();
+  }
+
+  List<UsageEvent> get usageEvents => _accounts.events;
+
+  Future<void> clearUsage() async {
+    await _accounts.clearEvents();
     notifyListeners();
   }
 }

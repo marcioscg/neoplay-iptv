@@ -20,7 +20,11 @@ class Storage {
   static const _kCacheAt = 'cache_at';
   static const _kParentalPin = 'parental_pin';
   static const _kParentalEnabled = 'parental_enabled';
+  static const _kHideAdult = 'hide_adult';
   static const _kUsers = 'admin_users';
+  static const _kUsage = 'usage_events';
+  static const _kRememberEmail = 'remember_email';
+  static const _kRememberPass = 'remember_pass';
   static const _kProgress = 'playback_progress';
 
   // Chaves da versão 1.0.0, removidas na migração.
@@ -122,10 +126,28 @@ class Storage {
     }
   }
 
-  bool get parentalEnabled => _p.getBool(_kParentalEnabled) ?? true;
+  bool get parentalEnabled => _p.getBool(_kParentalEnabled) ?? false;
 
   Future<void> saveParentalEnabled(bool enabled) =>
       _p.setBool(_kParentalEnabled, enabled);
+
+  bool get hideAdult => _p.getBool(_kHideAdult) ?? true;
+
+  Future<void> saveHideAdult(bool hide) => _p.setBool(_kHideAdult, hide);
+
+  // ---------- sessão lembrada (manter conectado) ----------
+  String? get rememberedEmail => _p.getString(_kRememberEmail);
+  String? get rememberedPassword => _p.getString(_kRememberPass);
+
+  Future<void> saveRememberedLogin(String email, String password) async {
+    await _p.setString(_kRememberEmail, email);
+    await _p.setString(_kRememberPass, password);
+  }
+
+  Future<void> clearRememberedLogin() async {
+    await _p.remove(_kRememberEmail);
+    await _p.remove(_kRememberPass);
+  }
 
   // ---------- autenticação & admin ----------
   AdminUser? get loggedUser {
@@ -164,6 +186,27 @@ class Storage {
   Future<void> saveAdminUsers(List<AdminUser> users) => _p.setString(
         _kUsers,
         jsonEncode([for (final u in users) u.toJson()]),
+      );
+
+  // ---------- telemetria de uso (central de estatísticas) ----------
+  List<UsageEvent> get usageEvents {
+    final raw = _p.getString(_kUsage);
+    if (raw == null || raw.isEmpty) return <UsageEvent>[];
+    try {
+      final list = jsonDecode(raw);
+      if (list is! List) return <UsageEvent>[];
+      return [
+        for (final e in list)
+          if (e is Map) UsageEvent.fromJson(Map<String, dynamic>.from(e)),
+      ];
+    } on Exception {
+      return <UsageEvent>[];
+    }
+  }
+
+  Future<void> saveUsageEvents(List<UsageEvent> events) => _p.setString(
+        _kUsage,
+        jsonEncode([for (final e in events) e.toJson()]),
       );
 
   // ---------- progresso de reprodução ----------

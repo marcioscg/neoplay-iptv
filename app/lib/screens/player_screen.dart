@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/models.dart';
 import '../services/cast_service.dart';
+import '../services/hls_quality.dart';
 import '../services/xtream_api.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
@@ -24,11 +25,12 @@ extension on PlayerAspect {
         PlayerAspect.ratio4x3 => '4:3',
       };
 
-  PlayerAspect get next => PlayerAspect
-      .values[(index + 1) % PlayerAspect.values.length];
+  PlayerAspect get next =>
+      PlayerAspect.values[(index + 1) % PlayerAspect.values.length];
 }
 
-/// Tela 07 — Player (ao vivo e VOD) com EPG do canal e zapeamento.
+/// Tela 07 — Player (ao vivo e VOD) com EPG do canal, zapeamento, controle de
+/// velocidade, seleção de qualidade e avanço automático de episódio.
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key, required this.item, this.siblings = const []});
 
@@ -41,6 +43,7 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   static const _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+  static const _autoQuality = 'Automática';
 
   VideoPlayerController? _controller;
   late MediaItem _current;
@@ -53,6 +56,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   double _speed = 1.0;
   PlayerAspect _aspect = PlayerAspect.fit;
   String? _seekHint;
+  bool _seekHintLeft = false;
+  bool _advancing = false;
+
+  // Qualidade (só quando o stream é um master playlist HLS com várias faixas).
+  List<HlsVariant> _qualities = const [];
+  String _qualityLabel = _autoQuality;
+  String? _sourceUrl; // URL "Automática" original do item atual.
+
+  // Overlay de controles em tela cheia.
+  bool _showControls = true;
+  Timer? _controlsTimer;
   Timer? _progressTimer;
   Timer? _hintTimer;
 
@@ -71,12 +85,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     _progressTimer?.cancel();
     _hintTimer?.cancel();
+    _controlsTimer?.cancel();
     _persistProgress();
     _controller?.removeListener(_onVideo);
     _controller?.dispose();
     _restoreOrientation();
     super.dispose();
   }
+
+  bool get _isLive => _current.kind == MediaKind.live;
+  bool get _hasSiblings => widget.siblings.length > 1;
 
   /// Manda o conteúdo para a TV e pausa a reprodução no celular.
   Future<void> _startCast() async {
@@ -86,7 +104,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final started = await showCastSheet(
       context,
       _current,
-      position: _current.kind == MediaKind.live ? Duration.zero : position,
+      position: _isLive ? Duration.zero : position,
     );
     if (!mounted) return;
     setState(() => _casting = started);
@@ -99,23 +117,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _controller?.play();
   }
 
-  Future<void> _open(MediaItem item) async {
+  /// Abre um item. [overrideUrl] é usado só para trocar de qualidade sem mexer
+  /// no restante do estado (EPG, zapeamento, favorito).
+  Future<void> _open(MediaItem item, {String? overrideUrl}) async {
     await _persistProgress();
+    final isQualitySwitch = overrideUrl != null;
+    final resumeAt = isQualitySwitch
+        ? (_controller?.value.position ?? Duration.zero)
+        : Duration.zero;
+
     setState(() {
       _current = item;
       _loading = true;
       _error = null;
-      _epg = const [];
-      _speed = 1.0;
-      _seekHint = null;
+      _advancing = false;
+      if (!isQualitySwitch) {
+        _epg = const [];
+        _speed = 1.0;
+        _seekHint = null;
+        _qualities = const [];
+        _qualityLabel = _autoQuality;
+        _sourceUrl = item.url;
+      }
     });
 
     _controller?.removeListener(_onVideo);
     await _controller?.dispose();
     _controller = null;
 
+    final url = overrideUrl ?? item.url;
     final controller = VideoPlayerController.networkUrl(
-      Uri.parse(item.url),
+      Uri.parse(url),
       httpHeaders: const {'User-Agent': 'MIAUNET/1.0 (Android)'},
       videoPlayerOptions: VideoPlayerOptions(allowBackgroundPlayback: false),
     );
@@ -124,16 +156,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await controller.initialize();
       await controller.setVolume(1);
       await controller.setPlaybackSpeed(_speed);
-      if (item.kind != MediaKind.live && mounted) {
-        final saved = context.read<AppState>().getProgress(item.id);
-        if (saved != null && saved.positionSeconds > 10) {
-          final target = Duration(seconds: saved.positionSeconds);
-          if (controller.value.duration == Duration.zero ||
-              target < controller.value.duration) {
+
+      if (!_isLive && mounted) {
+        Duration? target;
+        if (isQualitySwitch && resumeAt > Duration.zero) {
+          target = resumeAt;
+        } else {
+          final saved = context.read<AppState>().getProgress(item.id);
+          if (saved != null && saved.positionSeconds > 10) {
+            target = Duration(seconds: saved.positionSeconds);
+          }
+        }
+        if (target != null) {
+          final total = controller.value.duration;
+          if (total == Duration.zero || target < total) {
             await controller.seekTo(target);
           }
         }
       }
+
       await controller.play();
       if (!mounted) {
         await controller.dispose();
@@ -144,7 +185,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _controller = controller;
         _loading = false;
       });
-      _loadEpg(item);
+      _bumpControls();
+      if (!isQualitySwitch) {
+        _loadEpg(item);
+        _loadQualities(url);
+      }
     } on Exception catch (e) {
       await controller.dispose();
       if (!mounted) return;
@@ -158,15 +203,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onVideo() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
-    if (!c.value.isPlaying) {
-      _persistProgress();
+
+    // Fim do vídeo: passa para o próximo episódio sem sair do player.
+    if (!_isLive && _hasSiblings && !_advancing) {
+      final dur = c.value.duration;
+      final pos = c.value.position;
+      final ended = c.value.isCompleted ||
+          (dur > Duration.zero && pos >= dur - const Duration(milliseconds: 900));
+      if (ended) {
+        _advancing = true;
+        _zap(1);
+        return;
+      }
     }
+
+    if (!c.value.isPlaying) _persistProgress();
   }
 
   Future<void> _persistProgress() async {
     final c = _controller;
     if (!mounted || c == null || !c.value.isInitialized) return;
-    if (_current.kind == MediaKind.live) return;
+    if (_isLive) return;
     await context.read<AppState>().saveProgress(
           _current,
           c.value.position.inSeconds,
@@ -200,21 +257,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _epg = epg);
   }
 
+  Future<void> _loadQualities(String url) async {
+    final list = await HlsQuality.variants(url);
+    if (!mounted || list.isEmpty) return;
+    setState(() => _qualities = list);
+  }
+
+  Future<void> _switchQuality(String label) async {
+    if (label == _qualityLabel) return;
+    final url = label == _autoQuality
+        ? _sourceUrl
+        : _qualities.firstWhere((q) => q.label == label,
+            orElse: () => HlsVariant(label: label, url: _sourceUrl ?? '')).url;
+    if (url == null || url.isEmpty) return;
+    setState(() => _qualityLabel = label);
+    await _open(_current, overrideUrl: url);
+  }
+
   void _zap(int delta) {
     final list = widget.siblings;
-    if (list.isEmpty) return;
+    if (list.length < 2) return;
     final i = list.indexWhere((e) => e.id == _current.id);
     if (i < 0) return;
-    final next = (i + delta) % list.length;
-    _open(list[next < 0 ? list.length - 1 : next]);
-    context
-        .read<AppState>()
-        .markWatched(list[next < 0 ? list.length - 1 : next]);
+    var n = i + delta;
+    if (n < 0) n = list.length - 1;
+    if (n >= list.length) n = 0;
+    final next = list[n];
+    context.read<AppState>().markWatched(next);
+    _open(next);
   }
 
   Future<void> _toggleFullscreen() async {
     setState(() => _fullscreen = !_fullscreen);
     if (_fullscreen) {
+      _bumpControls();
       await SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
       );
@@ -229,15 +305,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
+  void _bumpControls() {
+    _controlsTimer?.cancel();
+    if (!_showControls && mounted) setState(() => _showControls = true);
+    _controlsTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && (_controller?.value.isPlaying ?? false)) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _bumpControls();
+  }
+
   void _seekBy(int seconds) {
     final c = _controller;
-    if (c == null || _current.kind == MediaKind.live) return;
+    if (c == null || _isLive) return;
     var next = c.value.position + Duration(seconds: seconds);
     if (next < Duration.zero) next = Duration.zero;
     final total = c.value.duration;
     if (total > Duration.zero && next > total) next = total;
     c.seekTo(next);
-    setState(() => _seekHint = seconds < 0 ? '${seconds}s' : '+${seconds}s');
+    setState(() {
+      _seekHint = seconds < 0 ? '-10s' : '+10s';
+      _seekHintLeft = seconds < 0;
+    });
     _hintTimer?.cancel();
     _hintTimer = Timer(const Duration(milliseconds: 700), () {
       if (mounted) setState(() => _seekHint = null);
@@ -245,7 +339,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onDoubleTap(TapDownDetails details, Size size) {
-    if (_current.kind == MediaKind.live) return;
+    if (_isLive) return;
     final left = details.localPosition.dx < size.width / 2;
     _seekBy(left ? -10 : 10);
   }
@@ -256,26 +350,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() {});
   }
 
+  void _togglePlay() {
+    final c = _controller;
+    if (c == null) return;
+    setState(() => c.value.isPlaying ? c.pause() : c.play());
+    _bumpControls();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final isLive = _current.kind == MediaKind.live;
 
     if (_fullscreen) {
       return Scaffold(
         backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            Positioned.fill(child: _video()),
-            Positioned(
-              top: 12,
-              right: 12,
-              child: IconButton(
-                icon: const Icon(Icons.fullscreen_exit, color: Colors.white),
-                onPressed: _toggleFullscreen,
-              ),
-            ),
-          ],
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleControls,
+          child: Stack(
+            children: [
+              Positioned.fill(child: _video()),
+              Positioned.fill(child: _overlay(state, fullscreen: true)),
+            ],
+          ),
         ),
       );
     }
@@ -303,7 +400,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 onStop: _stopCast,
               ),
             ),
-            Expanded(child: _epgSection(_current.kind == MediaKind.live)),
+            Expanded(child: _epgSection(_isLive)),
           ],
         ),
       );
@@ -329,9 +426,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AspectRatio(aspectRatio: 16 / 9, child: _video()),
-          _controls(state, isLive),
-          Expanded(child: _epgSection(isLive)),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleControls,
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _video()),
+                  Positioned.fill(child: _overlay(state, fullscreen: false)),
+                ],
+              ),
+            ),
+          ),
+          _controls(state, _isLive),
+          Expanded(child: _epgSection(_isLive)),
         ],
       ),
     );
@@ -377,29 +486,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
       color: Colors.black,
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final size = Size(constraints.maxWidth, constraints.maxHeight);
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onDoubleTapDown: (d) =>
-                _onDoubleTap(d, Size(constraints.maxWidth, constraints.maxHeight)),
+            onDoubleTapDown: (d) => _onDoubleTap(d, size),
+            onTap: _toggleControls,
             child: Stack(
               fit: StackFit.expand,
               children: [
                 _aspectVideo(c),
                 if (_seekHint != null)
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        _seekHint!,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
+                  Align(
+                    alignment:
+                        _seekHintLeft ? Alignment.centerLeft : Alignment.centerRight,
+                    child: FractionallySizedBox(
+                      widthFactor: 0.5,
+                      child: Container(
+                        color: Colors.black26,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _seekHintLeft ? Icons.fast_rewind : Icons.fast_forward,
+                              color: Colors.white,
+                              size: 34,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _seekHint!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -438,10 +560,227 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// Overlay sobre o vídeo: play/pause central, ±10s, faixa de progresso e,
+  /// em tela cheia, velocidade/qualidade/aspecto.
+  Widget _overlay(AppState state, {required bool fullscreen}) {
+    final c = _controller;
+    if (_loading || _error != null) return const SizedBox.shrink();
+    final visible = _showControls || !(c?.value.isPlaying ?? false);
+
+    return IgnorePointer(
+      ignoring: !visible,
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x99000000), Color(0x22000000), Color(0x99000000)],
+            ),
+          ),
+          child: Column(
+            children: [
+              if (fullscreen)
+                SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.fullscreen_exit,
+                            color: Colors.white),
+                        onPressed: _toggleFullscreen,
+                      ),
+                      Expanded(
+                        child: Text(
+                          _current.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.cast, color: Colors.white),
+                        onPressed: _startCast,
+                      ),
+                    ],
+                  ),
+                ),
+              const Spacer(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_hasSiblings)
+                    _round(Icons.skip_previous, () => _zap(-1)),
+                  if (!_isLive)
+                    _round(Icons.replay_10, () => _seekBy(-10)),
+                  const SizedBox(width: 6),
+                  _round(
+                    (c?.value.isPlaying ?? false)
+                        ? Icons.pause
+                        : Icons.play_arrow,
+                    _togglePlay,
+                    big: true,
+                  ),
+                  const SizedBox(width: 6),
+                  if (!_isLive) _round(Icons.forward_10, () => _seekBy(10)),
+                  if (_hasSiblings) _round(Icons.skip_next, () => _zap(1)),
+                ],
+              ),
+              const Spacer(),
+              if (fullscreen) ...[
+                if (c != null && !_isLive)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: [
+                        ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: c,
+                          builder: (_, v, __) => Text(
+                            _fmt(v.position),
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 11),
+                          ),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: VideoProgressIndicator(
+                              c,
+                              allowScrubbing: true,
+                              colors: const VideoProgressColors(
+                                playedColor: AppColors.accent,
+                                bufferedColor: Color(0x55FFFFFF),
+                                backgroundColor: Color(0x33FFFFFF),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _fmt(c.value.duration),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                SafeArea(
+                  top: false,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _menuSpeed(dark: true),
+                      if (_qualities.isNotEmpty) _menuQuality(dark: true),
+                      TextButton(
+                        onPressed: () =>
+                            setState(() => _aspect = _aspect.next),
+                        child: Text(_aspect.label,
+                            style: const TextStyle(color: Colors.white)),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          state.isFavorite(_current)
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: state.isFavorite(_current)
+                              ? AppColors.accent
+                              : Colors.white,
+                        ),
+                        onPressed: () => state.toggleFavorite(_current),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else
+                const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _round(IconData icon, VoidCallback onTap, {bool big = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Material(
+        color: Colors.black38,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.all(big ? 12 : 8),
+            child: Icon(icon, color: Colors.white, size: big ? 34 : 24),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _menuSpeed({bool dark = false}) {
+    return PopupMenuButton<double>(
+      tooltip: 'Velocidade',
+      initialValue: _speed,
+      onSelected: _setSpeed,
+      itemBuilder: (_) => [
+        for (final s in _speeds) PopupMenuItem(value: s, child: Text('${s}x')),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.speed,
+                size: 16, color: dark ? Colors.white : AppColors.accent),
+            const SizedBox(width: 4),
+            Text('${_speed}x',
+                style: TextStyle(
+                    fontSize: 12.5,
+                    color: dark ? Colors.white : AppColors.accent)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _menuQuality({bool dark = false}) {
+    return PopupMenuButton<String>(
+      tooltip: 'Qualidade',
+      initialValue: _qualityLabel,
+      onSelected: _switchQuality,
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: _autoQuality, child: Text(_autoQuality)),
+        for (final q in _qualities)
+          PopupMenuItem(value: q.label, child: Text(q.label)),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.hd,
+                size: 16, color: dark ? Colors.white : AppColors.accent),
+            const SizedBox(width: 4),
+            Text(
+              _qualityLabel == _autoQuality ? 'Auto' : _qualityLabel,
+              style: TextStyle(
+                  fontSize: 12.5,
+                  color: dark ? Colors.white : AppColors.accent),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _controls(AppState state, bool isLive) {
     final c = _controller;
     final playing = c?.value.isPlaying ?? false;
     final fav = state.isFavorite(_current);
+    final isEpisode = _current.kind == MediaKind.series;
 
     return Container(
       color: AppColors.surface2,
@@ -455,7 +794,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 child: Text(
                   isLive
                       ? (_epg.isNotEmpty ? _epg.first.title : 'Ao vivo')
-                      : 'Sob demanda',
+                      : isEpisode
+                          ? _current.name
+                          : 'Sob demanda',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -491,9 +832,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             children: [
               IconButton(
                 icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                onPressed: c == null
-                    ? null
-                    : () => setState(() => playing ? c.pause() : c.play()),
+                onPressed: c == null ? null : _togglePlay,
               ),
               IconButton(
                 tooltip: '-10s',
@@ -501,12 +840,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 onPressed: c == null || isLive ? null : () => _seekBy(-10),
               ),
               IconButton(
+                tooltip: 'Anterior',
                 icon: const Icon(Icons.skip_previous),
-                onPressed: widget.siblings.isEmpty ? null : () => _zap(-1),
+                onPressed: _hasSiblings ? () => _zap(-1) : null,
               ),
               IconButton(
+                tooltip: 'Próximo',
                 icon: const Icon(Icons.skip_next),
-                onPressed: widget.siblings.isEmpty ? null : () => _zap(1),
+                onPressed: _hasSiblings ? () => _zap(1) : null,
               ),
               IconButton(
                 tooltip: '+10s',
@@ -526,39 +867,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ],
           ),
-          if (!isLive && c != null)
-            Row(
-              children: [
-                PopupMenuButton<double>(
-                  tooltip: 'Velocidade',
-                  initialValue: _speed,
-                  onSelected: _setSpeed,
-                  itemBuilder: (_) => [
-                    for (final s in _speeds)
-                      PopupMenuItem(
-                        value: s,
-                        child: Text('${s}x'),
-                      ),
-                  ],
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 8),
-                    child: Text(
-                      '${_speed}x',
-                      style: const TextStyle(
-                          fontSize: 12.5, color: AppColors.accent),
-                    ),
-                  ),
+          Row(
+            children: [
+              _menuSpeed(),
+              if (_qualities.isNotEmpty) _menuQuality(),
+              const Spacer(),
+              TextButton(
+                onPressed: () => setState(() => _aspect = _aspect.next),
+                child: Text(
+                  _aspect.label,
+                  style: const TextStyle(fontSize: 12.5),
                 ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () => setState(() => _aspect = _aspect.next),
-                  child: Text(
-                    _aspect.label,
-                    style: const TextStyle(fontSize: 12.5),
-                  ),
-                ),
-              ],
+              ),
+            ],
+          ),
+          if (isEpisode && _hasSiblings)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _zap(1),
+                icon: const Icon(Icons.playlist_play, size: 18),
+                label: const Text('Próximo episódio'),
+              ),
             ),
         ],
       ),
@@ -571,7 +901,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         icon: Icons.movie_outlined,
         title: 'Reprodução sob demanda',
         message:
-            'Toque duas vezes à esquerda/direita para ±10s. Ajuste velocidade e aspecto abaixo do vídeo.',
+            'Toque duas vezes à esquerda/direita para ±10s. Ajuste velocidade, qualidade e aspecto abaixo do vídeo.',
       );
     }
     if (_epg.isEmpty) {

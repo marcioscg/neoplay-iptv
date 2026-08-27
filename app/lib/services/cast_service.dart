@@ -90,7 +90,8 @@ class CastService {
     await GoogleCastSessionManager.instance.startSessionWithDevice(device);
     await GoogleCastRemoteMediaClient.instance.loadMedia(
       GoogleCastMediaInformationIOS(
-        contentId: item.id,
+        // O receptor padrão do Chromecast usa contentId como URL de mídia.
+        contentId: item.url,
         streamType: item.kind == MediaKind.live
             ? CastMediaStreamType.live
             : CastMediaStreamType.buffered,

@@ -244,6 +244,9 @@ class AdminUser {
   final String name;
   final String email;
   final String password;
+
+  /// Lista M3U/M3U8 que vai rodar no app desta conta.
+  final String m3uUrl;
   final UserPlan plan;
   final UserStatus status;
   final DateTime createdAt;
@@ -254,6 +257,7 @@ class AdminUser {
     required this.name,
     required this.email,
     required this.password,
+    this.m3uUrl = '',
     this.plan = UserPlan.mensal,
     this.status = UserStatus.active,
     required this.createdAt,
@@ -272,6 +276,7 @@ class AdminUser {
         'name': name,
         'email': email,
         'password': password,
+        'm3uUrl': m3uUrl,
         'plan': plan.name,
         'status': status.name,
         'createdAt': createdAt.toIso8601String(),
@@ -283,6 +288,7 @@ class AdminUser {
         name: (j['name'] ?? '') as String,
         email: (j['email'] ?? '') as String,
         password: (j['password'] ?? '') as String,
+        m3uUrl: (j['m3uUrl'] ?? '') as String,
         plan: UserPlan.fromString((j['plan'] ?? 'mensal') as String),
         status: UserStatus.fromString((j['status'] ?? 'active') as String),
         createdAt: DateTime.tryParse((j['createdAt'] ?? '') as String) ?? DateTime.now(),
@@ -293,6 +299,7 @@ class AdminUser {
     String? name,
     String? email,
     String? password,
+    String? m3uUrl,
     UserPlan? plan,
     UserStatus? status,
     DateTime? expiresAt,
@@ -302,12 +309,58 @@ class AdminUser {
       name: name ?? this.name,
       email: email ?? this.email,
       password: password ?? this.password,
+      m3uUrl: m3uUrl ?? this.m3uUrl,
       plan: plan ?? this.plan,
       status: status ?? this.status,
       createdAt: createdAt,
       expiresAt: expiresAt ?? this.expiresAt,
     );
   }
+}
+
+/// Evento de uso registrado quando alguém abre um conteúdo. Base da central de
+/// estatísticas do painel de controle.
+class UsageEvent {
+  final String userEmail;
+  final String userName;
+  final String mediaId;
+  final String title;
+  final String group;
+  final MediaKind kind;
+  final DateTime watchedAt;
+
+  const UsageEvent({
+    required this.userEmail,
+    this.userName = '',
+    required this.mediaId,
+    required this.title,
+    this.group = '',
+    required this.kind,
+    required this.watchedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'e': userEmail,
+        'n': userName,
+        'i': mediaId,
+        't': title,
+        'g': group,
+        'k': kind.name,
+        'w': watchedAt.toIso8601String(),
+      };
+
+  factory UsageEvent.fromJson(Map<String, dynamic> j) => UsageEvent(
+        userEmail: (j['e'] ?? '') as String,
+        userName: (j['n'] ?? '') as String,
+        mediaId: (j['i'] ?? '') as String,
+        title: (j['t'] ?? '') as String,
+        group: (j['g'] ?? '') as String,
+        kind: MediaKind.values.firstWhere(
+          (x) => x.name == (j['k'] ?? 'live'),
+          orElse: () => MediaKind.live,
+        ),
+        watchedAt: DateTime.tryParse((j['w'] ?? '') as String) ?? DateTime.now(),
+      );
 }
 
 /// Posição salva de reprodução ("Continuar Assistindo").

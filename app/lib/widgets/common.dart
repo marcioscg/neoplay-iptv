@@ -259,6 +259,7 @@ class CategoryTile extends StatelessWidget {
     required this.onTap,
     this.icon,
     this.highlight = false,
+    this.locked = false,
   });
 
   final String title;
@@ -266,6 +267,7 @@ class CategoryTile extends StatelessWidget {
   final VoidCallback onTap;
   final IconData? icon;
   final bool highlight;
+  final bool locked;
 
   @override
   Widget build(BuildContext context) {
@@ -304,7 +306,11 @@ class CategoryTile extends StatelessWidget {
                 ),
               ),
             const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, size: 18, color: Color(0xFF5B6274)),
+            Icon(
+              locked ? Icons.lock_outline : Icons.chevron_right,
+              size: locked ? 15 : 18,
+              color: locked ? AppColors.accent : const Color(0xFF5B6274),
+            ),
           ],
         ),
       ),

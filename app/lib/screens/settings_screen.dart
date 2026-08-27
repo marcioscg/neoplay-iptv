@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/pin_dialog.dart';
 import 'setup_screen.dart';
 
 /// Tela 14 — Configurações.
@@ -59,17 +60,66 @@ class SettingsScreen extends StatelessWidget {
               state.refresh();
             },
           ),
-          CategoryTile(
-            title: 'Trocar de lista',
-            count: 0,
-            icon: Icons.playlist_add,
-            onTap: () => _replace(context),
-          ),
+          if (state.isMaster)
+            CategoryTile(
+              title: 'Trocar de lista',
+              count: 0,
+              icon: Icons.playlist_add,
+              onTap: () => _replace(context),
+            ),
           CategoryTile(
             title: 'Limpar favoritos e histórico',
             count: state.favoriteItems.length,
             icon: Icons.delete_outline,
             onTap: () => _confirmClearFavorites(context, state),
+          ),
+          const SectionLabel('Controle parental'),
+          SwitchListTile(
+            tileColor: AppColors.surface1,
+            title: const Text('Ativar controle parental',
+                style: TextStyle(fontSize: 14)),
+            subtitle: const Text(
+              'Pede PIN para abrir categorias adultas',
+              style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+            ),
+            value: state.parentalActive,
+            onChanged: (v) => _toggleParental(context, state, v),
+          ),
+          if (state.parentalActive) ...[
+            SwitchListTile(
+              tileColor: AppColors.surface1,
+              title: const Text('Ocultar conteúdo adulto',
+                  style: TextStyle(fontSize: 14)),
+              subtitle: const Text(
+                'Some com as categorias adultas da navegação e da busca',
+                style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+              ),
+              value: state.hideAdult,
+              onChanged: state.setHideAdult,
+            ),
+            CategoryTile(
+              title: state.isParentalEnabled
+                  ? 'Alterar PIN parental'
+                  : 'Definir PIN parental (padrão 1234)',
+              count: 0,
+              icon: Icons.password,
+              onTap: () => changeParentalPin(context, state),
+            ),
+            if (state.adultUnlocked)
+              CategoryTile(
+                title: 'Bloquear conteúdo adulto agora',
+                count: 0,
+                icon: Icons.lock_outline,
+                onTap: state.lockAdultSession,
+              ),
+          ],
+          const SectionLabel('Conta'),
+          _info('Conectado como ${state.session?.displayName ?? '—'}'),
+          CategoryTile(
+            title: 'Sair da conta',
+            count: 0,
+            icon: Icons.logout,
+            onTap: () => _confirmLogout(context, state),
           ),
           const SectionLabel('Aplicativo'),
           const _StaticRow(label: 'Tema de cores', value: 'Escuro (padrão)'),
@@ -120,6 +170,27 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _toggleParental(
+      BuildContext context, AppState state, bool value) async {
+    await state.setParentalEnabled(value);
+    if (!context.mounted) return;
+    if (value && !state.isParentalEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PIN padrão 1234. Troque em "Alterar PIN parental".'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmLogout(BuildContext context, AppState state) async {
+    final ok = await _ask(context, 'Sair da conta neste aparelho?');
+    if (!ok || !context.mounted) return;
+    await state.logout();
+    if (!context.mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
   Future<void> _confirmClearFavorites(
       BuildContext context, AppState state) async {
     final ok = await _ask(context, 'Limpar favoritos e histórico?');
@@ -135,10 +206,7 @@ class SettingsScreen extends StatelessWidget {
     if (!ok) return;
     await state.resetEverything();
     if (!context.mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const SetupScreen()),
-      (route) => false,
-    );
+    Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   Future<bool> _ask(BuildContext context, String question) async {

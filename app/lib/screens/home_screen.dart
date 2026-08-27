@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/pin_dialog.dart';
 import 'items_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -134,8 +135,9 @@ class _ChannelsTab extends StatelessWidget {
           (c) => CategoryTile(
             title: c.name,
             count: c.count,
-            onTap: () =>
-                _open(context, c.name, state.inCategory(state.live, c.name)),
+            locked: state.isGroupLocked(c.name),
+            onTap: () => _openCategory(
+                context, state, c.name, state.inCategory(state.live, c.name)),
           ),
         ),
         if (state.updatedAt != null)
@@ -182,8 +184,10 @@ class _MoviesTab extends StatelessWidget {
           (c) => CategoryTile(
             title: c.name,
             count: c.count,
-            onTap: () => _open(
+            locked: state.isGroupLocked(c.name),
+            onTap: () => _openCategory(
               context,
+              state,
               c.name,
               state.inCategory(state.movies, c.name),
               grid: true,
@@ -226,8 +230,10 @@ class _SeriesTab extends StatelessWidget {
           (c) => CategoryTile(
             title: c.name,
             count: c.count,
-            onTap: () => _open(
+            locked: state.isGroupLocked(c.name),
+            onTap: () => _openCategory(
               context,
+              state,
               c.name,
               state.inCategory(state.series, c.name),
               grid: true,
@@ -279,6 +285,24 @@ void _open(BuildContext context, String title, List<MediaItem> items,
       builder: (_) => ItemsScreen(title: title, items: items, grid: grid),
     ),
   );
+}
+
+/// Abre uma categoria; se estiver marcada como adulta e o controle parental
+/// ativo, pede o PIN antes.
+Future<void> _openCategory(
+  BuildContext context,
+  AppState state,
+  String title,
+  List<MediaItem> items, {
+  bool grid = false,
+}) async {
+  if (state.isGroupLocked(title)) {
+    final ok =
+        await promptParentalPin(context, state, title: 'Categoria adulta');
+    if (!ok || !context.mounted) return;
+  }
+  if (!context.mounted) return;
+  _open(context, title, items, grid: grid);
 }
 
 String _stamp(DateTime d) {
