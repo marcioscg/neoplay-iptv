@@ -1,6 +1,8 @@
-# NEOPLAY — Player de listas IPTV
+# MIAU NET — Player de listas IPTV
 
-Aplicativo Flutter que reproduz listas IPTV informadas pelo próprio usuário: **Xtream Codes** (host + usuário + senha) ou **URL M3U/M3U8**. Inclui canais ao vivo, conteúdo sob demanda, EPG curto por canal, favoritos, histórico, busca global e suporte a Android TV.
+Aplicativo Flutter que reproduz listas IPTV informadas pelo próprio usuário: **Xtream Codes** (host + usuário + senha) ou **URL M3U/M3U8**. Inclui login por conta, painel de controle (conta master), canais ao vivo, filmes, séries com temporadas, EPG curto por canal, favoritos, histórico, busca global, controle parental e suporte a Android TV.
+
+> Antes chamado NEOPLAY. As novidades da versão atual estão em `docs/NOVIDADES_1.0.3.md`.
 
 > Este aplicativo **não fornece, hospeda ou distribui conteúdo**. Todo o conteúdo vem da lista cadastrada pelo usuário final.
 
