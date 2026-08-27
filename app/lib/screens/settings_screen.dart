@@ -127,7 +127,6 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _confirmLogout(context, state),
           ),
           const SectionLabel('Aplicativo'),
-          _ThemeRow(state: state),
           const _StaticRow(label: 'Língua', value: 'Português (BR)'),
           const _StaticRow(label: 'Player', value: 'ExoPlayer (Media3)'),
           CategoryTile(
@@ -141,7 +140,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  'MIAU NET · versão 1.0.7',
+                  'MIAU NET · versão 1.0.8',
                   style: TextStyle(fontSize: 11.5, color: Color(0xFF5B6274)),
                 ),
                 SizedBox(height: 6),
@@ -262,43 +261,6 @@ class _StaticRow extends StatelessWidget {
   }
 }
 
-/// Seletor de tema: do sistema / claro / escuro.
-class _ThemeRow extends StatelessWidget {
-  const _ThemeRow({required this.state});
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface1,
-        border: Border(bottom: BorderSide(color: AppColors.line)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      child: Row(
-        children: [
-          const Expanded(
-            child: Text('Tema de cores', style: TextStyle(fontSize: 14)),
-          ),
-          DropdownButton<AppThemeChoice>(
-            value: state.themeChoice,
-            underline: const SizedBox.shrink(),
-            style: TextStyle(fontSize: 13, color: AppColors.text),
-            dropdownColor: AppColors.surface2,
-            items: [
-              for (final c in AppThemeChoice.values)
-                DropdownMenuItem(value: c, child: Text(c.label)),
-            ],
-            onChanged: (v) {
-              if (v != null) state.setThemeChoice(v);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Cartão "Meu plano" para a conta comum: validade + botão de renovação.
 class _PlanCard extends StatelessWidget {
   const _PlanCard({required this.account});
@@ -309,6 +271,9 @@ class _PlanCard extends StatelessWidget {
     final expired = account.isExpired;
     final days = account.daysLeft;
     final lifetime = account.plan == UserPlan.vitalicio;
+    // Vermelho quando venceu ou falta 3 dias ou menos.
+    final urgent = !lifetime &&
+        (expired || (account.expiresAt != null && (days ?? 99) <= 3));
 
     final String status;
     if (lifetime) {
@@ -329,9 +294,7 @@ class _PlanCard extends StatelessWidget {
         color: AppColors.surface1,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: expired
-              ? AppColors.bad.withValues(alpha: 0.5)
-              : AppColors.line,
+          color: urgent ? AppColors.bad.withValues(alpha: 0.5) : AppColors.line,
         ),
       ),
       child: Column(
@@ -356,6 +319,12 @@ class _PlanCard extends StatelessWidget {
           if (!lifetime) ...[
             const SizedBox(height: 12),
             FilledButton.icon(
+              style: urgent
+                  ? FilledButton.styleFrom(
+                      backgroundColor: AppColors.bad,
+                      foregroundColor: Colors.white,
+                    )
+                  : null,
               onPressed: () => _renew(context),
               icon: const Icon(Icons.chat, size: 18),
               label: const Text('Renovar pelo WhatsApp'),

@@ -14,6 +14,7 @@ import 'services/storage.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
 import 'widgets/common.dart';
+import 'widgets/due_reminder.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,7 +28,7 @@ Future<void> main() async {
 
   var firebaseOk = false;
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp().timeout(const Duration(seconds: 8));
     final o = Firebase.app().options;
     // O CI grava um google-services.json de placeholder quando o secret
     // GOOGLE_SERVICES_JSON_BASE64 não está configurado. Nesse caso o
@@ -45,13 +46,17 @@ Future<void> main() async {
     debugPrint('Firebase indisponível, usando modo local: $e');
   }
 
-  await CastService.instance.init();
-
   final storage = await Storage.open();
   final AccountsRepository accounts = firebaseOk
       ? FirebaseAccountsRepository()
       : LocalAccountsRepository(storage);
   runApp(MiauNetApp(storage: storage, accounts: accounts));
+
+  // Cast só é usado dentro do player: inicializa depois do primeiro frame para o
+  // app abrir mais rápido.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    CastService.instance.init();
+  });
 }
 
 class MiauNetApp extends StatelessWidget {
@@ -62,42 +67,15 @@ class MiauNetApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = buildTheme();
     return ChangeNotifierProvider(
       create: (_) => AppState(storage, accounts),
-      child: const _ThemedApp(),
-    );
-  }
-}
-
-/// Aplica o tema escolhido (sistema / claro / escuro) e mantém [appIsDark]
-/// sincronizado, para que as cores de [AppColors] acompanhem a troca.
-class _ThemedApp extends StatelessWidget {
-  const _ThemedApp();
-
-  @override
-  Widget build(BuildContext context) {
-    final choice = context.watch<AppState>().themeChoice;
-    final systemDark =
-        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
-    final dark = switch (choice) {
-      AppThemeChoice.system => systemDark,
-      AppThemeChoice.light => false,
-      AppThemeChoice.dark => true,
-    };
-    if (appIsDark.value != dark) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (appIsDark.value != dark) appIsDark.value = dark;
-      });
-    }
-
-    return ValueListenableBuilder<bool>(
-      valueListenable: appIsDark,
-      builder: (context, _, __) => MaterialApp(
+      child: MaterialApp(
         title: 'MIAU NET',
         debugShowCheckedModeBanner: false,
-        theme: buildTheme(dark: false),
-        darkTheme: buildTheme(dark: true),
-        themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+        theme: theme,
+        darkTheme: theme,
+        themeMode: ThemeMode.dark,
         home: const RootGate(),
       ),
     );
@@ -161,6 +139,8 @@ class _AppEntryState extends State<_AppEntry> {
           state.series.isEmpty) {
         state.refresh();
       }
+      // Lembrete de mensalidade (vence em ≤1 dia ou vencida): popup 1x/dia.
+      maybeShowDueReminder(context);
     });
   }
 

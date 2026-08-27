@@ -95,10 +95,30 @@ jobs:
 
       # Celulares, TV boxes e Fire Stick são ARM: deixar o x86 de fora evita
       # falhas de build do SDK do Google Cast e reduz o tamanho do APK.
+      # As senhas master podem vir de secrets (--dart-define); sem elas, o app
+      # usa os defaults embutidos em accounts_repository.dart.
       - name: Compilar APK universal (release)
+        env:
+          MASTER1_PASS: ${{ secrets.MASTER1_PASS }}
+          MASTER2_PASS: ${{ secrets.MASTER2_PASS }}
         run: |
           set -o pipefail
-          flutter build apk --release --target-platform android-arm,android-arm64 2>&1 | tee /tmp/build.log
+          DEFINES=""
+          [ -n "$MASTER1_PASS" ] && DEFINES="$DEFINES --dart-define=MASTER1_PASS=$MASTER1_PASS"
+          [ -n "$MASTER2_PASS" ] && DEFINES="$DEFINES --dart-define=MASTER2_PASS=$MASTER2_PASS"
+          flutter build apk --release --target-platform android-arm,android-arm64 $DEFINES 2>&1 | tee /tmp/build.log
+
+      # APKs menores, um por arquitetura (o app instala ~40% mais leve).
+      - name: Compilar APKs por arquitetura (release)
+        env:
+          MASTER1_PASS: ${{ secrets.MASTER1_PASS }}
+          MASTER2_PASS: ${{ secrets.MASTER2_PASS }}
+        run: |
+          set -o pipefail
+          DEFINES=""
+          [ -n "$MASTER1_PASS" ] && DEFINES="$DEFINES --dart-define=MASTER1_PASS=$MASTER1_PASS"
+          [ -n "$MASTER2_PASS" ] && DEFINES="$DEFINES --dart-define=MASTER2_PASS=$MASTER2_PASS"
+          flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 $DEFINES 2>&1 | tee -a /tmp/build.log
 
       - name: Diagnóstico do erro de build
         if: failure()

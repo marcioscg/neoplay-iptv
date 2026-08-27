@@ -3,16 +3,26 @@ rules_version = '2';
 // Regras do Firestore do MIAU NET (projeto iptv-f90b5).
 // Cole isto em Firestore Database > Regras > Publicar.
 //
-// Modelo: o e-mail do master tem acesso amplo; cada conta comum só enxerga o
-// próprio perfil e só pode gravar o próprio "último acesso" (aparelho/data).
-// Qualquer conta autenticada registra eventos de uso e lê a tabela de preços.
+// Modelo (1.0.8):
+//   - Master 1 (marcioscg@hotmail.com): acesso amplo, incluindo a Central de uso.
+//   - Master 2 (nunestrc09@gmail.com): tudo, menos ler/limpar a Central de uso.
+//   - Conta comum: só enxerga o próprio perfil e grava só o próprio "último
+//     acesso" (aparelho/data). Registra eventos de uso e lê a tabela de preços.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isMaster() {
+    function isMasterPrimary() {
       return request.auth != null
         && request.auth.token.email == 'marcioscg@hotmail.com';
+    }
+
+    function isMaster() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'marcioscg@hotmail.com',
+          'nunestrc09@gmail.com'
+        ];
     }
 
     function touchingOnlyDevice() {
@@ -22,11 +32,9 @@ service cloud.firestore {
 
     // Perfis das contas.
     match /users/{uid} {
-      // Master lê/lista tudo; a pessoa lê só o próprio doc.
       allow get: if isMaster() || request.auth.uid == uid;
       allow list: if isMaster();
 
-      // Master cria/edita/exclui (exclusão é marcar deleted=true).
       allow create, delete: if isMaster();
       allow update: if isMaster()
         || (request.auth.uid == uid && touchingOnlyDevice());
@@ -34,8 +42,11 @@ service cloud.firestore {
 
     // Telemetria de uso.
     match /usage_events/{eventId} {
-      allow create: if request.auth != null;      // qualquer conta registra
-      allow read, list, delete: if isMaster();     // só o master consulta/limpa
+      // Qualquer conta registra, mas só em nome de si mesma.
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+      // Só o Master 1 consulta / limpa a Central de uso.
+      allow read, list, delete: if isMasterPrimary();
       allow update: if false;
     }
 
@@ -43,6 +54,22 @@ service cloud.firestore {
     match /config/{doc} {
       allow read: if request.auth != null;
       allow write: if isMaster();
+    }
+
+    // Trava de aparelho do Master 1 (chave = hash do e-mail).
+    match /master_bindings/{key} {
+      allow read, write: if isMaster();
+    }
+
+    // Trava de 24 h por 3 senhas erradas. A chave é sha256(e-mail), então o
+    // e-mail não fica exposto. Precisa ser legível antes do login para o app
+    // saber que está travado; a escrita é limitada a estes 3 campos.
+    match /login_locks/{emailHash} {
+      allow get: if true;
+      allow list: if isMasterPrimary();
+      allow create, update: if request.resource.data.keys()
+        .hasOnly(['fails', 'firstFailAt', 'lockedUntil']);
+      allow delete: if isMaster();
     }
   }
 }

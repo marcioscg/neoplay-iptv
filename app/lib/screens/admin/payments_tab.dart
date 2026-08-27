@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -61,15 +63,42 @@ class _PaymentsTabState extends State<PaymentsTab> {
       semestral: _parse(_semestral),
       anual: _parse(_anual),
     );
-    await context.read<AppState>().savePricing(pricing);
+
+    String? error;
+    var timedOut = false;
+    try {
+      await context
+          .read<AppState>()
+          .savePricing(pricing)
+          .timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      timedOut = true;
+    } on Object catch (e) {
+      error = e.toString().replaceAll('Exception: ', '');
+    }
+
     if (!mounted) return;
     setState(() {
       _saving = false;
-      _dirty = false;
+      // Sucesso/timeout: some com o "não salvo". Erro: mantém para tentar de novo.
+      _dirty = error != null;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Preços salvos.')),
-    );
+
+    final messenger = ScaffoldMessenger.of(context);
+    if (error != null) {
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: AppColors.bad,
+        content: Text('Não salvou: $error'),
+      ));
+    } else if (timedOut) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Salvo no aparelho; sincroniza quando a internet voltar.'),
+      ));
+    } else {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Preços salvos.')),
+      );
+    }
   }
 
   @override
