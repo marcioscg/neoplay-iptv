@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../models/models.dart';
 import '../services/cast_service.dart';
 import '../services/hls_quality.dart';
+import '../services/pip_service.dart';
 import '../services/xtream_api.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
@@ -41,7 +42,8 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen>
+    with WidgetsBindingObserver {
   static const _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
   static const _autoQuality = 'Automática';
 
@@ -50,6 +52,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _loading = true;
   bool _fullscreen = false;
+  bool _pipSupported = false;
+  bool _pipActive = false;
   String? _error;
   List<XtreamProgram> _epg = const [];
   bool _casting = false;
@@ -74,6 +78,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void initState() {
     super.initState();
     _current = widget.item;
+    WidgetsBinding.instance.addObserver(this);
+    PipService.instance.attach(
+      onAction: _onPipAction,
+      onModeChanged: _onPipMode,
+    );
+    PipService.instance.isSupported().then((v) {
+      if (mounted) setState(() => _pipSupported = v);
+    });
     _open(_current);
     _progressTimer = Timer.periodic(
       const Duration(seconds: 8),
@@ -83,6 +95,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    PipService.instance.detach();
     _progressTimer?.cancel();
     _hintTimer?.cancel();
     _controlsTimer?.cancel();
@@ -91,6 +105,45 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _controller?.dispose();
     _restoreOrientation();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // App indo para segundo plano com o vídeo tocando: abre a janelinha (PiP).
+    if (state == AppLifecycleState.inactive &&
+        !_pipActive &&
+        !_casting &&
+        _error == null &&
+        (_controller?.value.isInitialized ?? false) &&
+        (_controller?.value.isPlaying ?? false)) {
+      _enterPip();
+    } else if (state == AppLifecycleState.resumed && _pipActive) {
+      setState(() => _pipActive = false);
+    }
+  }
+
+  void _onPipMode(bool inPip) {
+    if (mounted) setState(() => _pipActive = inPip);
+  }
+
+  void _onPipAction(String control) {
+    switch (control) {
+      case 'rewind':
+        _seekBy(-10);
+      case 'forward':
+        _seekBy(10);
+      case 'playpause':
+        _togglePlay();
+    }
+    PipService.instance.setPlaying(_controller?.value.isPlaying ?? false);
+  }
+
+  Future<void> _enterPip() async {
+    if (!_pipSupported) return;
+    final ok = await PipService.instance.enter(
+      playing: _controller?.value.isPlaying ?? false,
+    );
+    if (ok && mounted) setState(() => _pipActive = true);
   }
 
   bool get _isLive => _current.kind == MediaKind.live;
@@ -149,7 +202,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final controller = VideoPlayerController.networkUrl(
       Uri.parse(url),
       httpHeaders: const {'User-Agent': 'MIAUNET/1.0 (Android)'},
-      videoPlayerOptions: VideoPlayerOptions(allowBackgroundPlayback: false),
+      // Mantém o áudio/vídeo tocando quando o app vai para a janelinha (PiP)
+      // ou segundo plano. Ao sair do player o controller é liberado.
+      videoPlayerOptions: VideoPlayerOptions(allowBackgroundPlayback: true),
     );
 
     try {
@@ -360,6 +415,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+
+    if (_pipActive) {
+      final c = _controller;
+      return ColoredBox(
+        color: Colors.black,
+        child: (c != null && c.value.isInitialized)
+            ? Center(
+                child: AspectRatio(
+                  aspectRatio:
+                      c.value.aspectRatio == 0 ? 16 / 9 : c.value.aspectRatio,
+                  child: VideoPlayer(c),
+                ),
+              )
+            : const SizedBox.expand(),
+      );
+    }
 
     if (_fullscreen) {
       return Scaffold(
@@ -871,6 +942,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _menuSpeed(),
               if (_qualities.isNotEmpty) _menuQuality(),
               const Spacer(),
+              if (_pipSupported)
+                IconButton(
+                  tooltip: 'Janela flutuante',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.picture_in_picture_alt, size: 20),
+                  onPressed: _controller == null ? null : _enterPip,
+                ),
               TextButton(
                 onPressed: () => setState(() => _aspect = _aspect.next),
                 child: Text(

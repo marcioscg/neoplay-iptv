@@ -141,7 +141,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  'MIAU NET · versão 1.0.6',
+                  'MIAU NET · versão 1.0.7',
                   style: TextStyle(fontSize: 11.5, color: Color(0xFF5B6274)),
                 ),
                 SizedBox(height: 6),
