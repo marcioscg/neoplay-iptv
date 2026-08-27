@@ -36,3 +36,4 @@ app/ios/Flutter/ephemeral/
 *.log
 .env
 .env.*
+gs.json
