@@ -61,7 +61,8 @@ class AppState extends ChangeNotifier {
     favorites = _storage.favorites;
     _recentIds = _storage.recent.toList();
     updatedAt = _storage.cachedAt;
-    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+    _playbackProgress =
+      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
 
     final cached = await _storage.loadCachedContent();
@@ -361,7 +362,7 @@ class AppState extends ChangeNotifier {
   Future<void> clearFavoritesAndHistory() async {
     favorites = <String>{};
     _recentIds = const [];
-    _progress = {};
+    _playbackProgress = {};
     notifyListeners();
     await _storage.saveFavorites(const <String>{});
     await _storage.saveRecent(const []);
@@ -375,7 +376,7 @@ class AppState extends ChangeNotifier {
     error = null;
     favorites = <String>{};
     _recentIds = const [];
-    _progress = {};
+    _playbackProgress = {};
     _seriesCache.clear();
     _apply(const PlaylistContent());
     stage = LoadStage.idle;
@@ -408,12 +409,12 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- continuar assistindo ----------
-  Map<String, PlaybackProgress> _progress = {};
+    Map<String, PlaybackProgress> _playbackProgress = {};
 
   Map<String, PlaybackProgress> get playbackProgress =>
-      Map<String, PlaybackProgress>.unmodifiable(_progress);
+      Map<String, PlaybackProgress>.unmodifiable(_playbackProgress);
 
-  PlaybackProgress? getProgress(String itemId) => _progress[itemId];
+    PlaybackProgress? getProgress(String itemId) => _playbackProgress[itemId];
 
   Future<void> saveProgress(MediaItem item, int posSec, int durSec) async {
     if (item.kind == MediaKind.live || item.url.isEmpty || durSec <= 0) {
@@ -431,19 +432,21 @@ class AppState extends ChangeNotifier {
       updatedAt: DateTime.now(),
     );
     await _storage.savePlaybackProgress(progress);
-    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+    _playbackProgress =
+      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
   }
 
   Future<void> clearProgress(String itemId) async {
     await _storage.clearPlaybackProgress(itemId);
-    _progress = Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+    _playbackProgress =
+      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
   }
 
   List<MediaItem> get continueWatchingItems {
-    if (_progress.isEmpty) return const [];
-    final list = _progress.values.toList()
+    if (_playbackProgress.isEmpty) return const [];
+    final list = _playbackProgress.values.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final out = <MediaItem>[];
     for (final p in list) {
