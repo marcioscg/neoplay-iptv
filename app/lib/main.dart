@@ -9,6 +9,7 @@ import 'screens/login_screen.dart';
 import 'screens/setup_screen.dart';
 import 'services/accounts_repository.dart';
 import 'services/cast_service.dart';
+import 'services/firebase_accounts_repository.dart';
 import 'services/storage.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
@@ -24,16 +25,20 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache.maximumSize = 220;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
 
+  var firebaseOk = false;
   try {
     await Firebase.initializeApp();
+    firebaseOk = true;
   } on Object catch (e) {
-    debugPrint('Firebase indisponível: $e');
+    debugPrint('Firebase indisponível, usando modo local: $e');
   }
 
   await CastService.instance.init();
 
   final storage = await Storage.open();
-  final AccountsRepository accounts = LocalAccountsRepository(storage);
+  final AccountsRepository accounts = firebaseOk
+      ? FirebaseAccountsRepository()
+      : LocalAccountsRepository(storage);
   runApp(MiauNetApp(storage: storage, accounts: accounts));
 }
 

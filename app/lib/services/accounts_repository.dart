@@ -10,36 +10,47 @@ bool isMasterCredential(String email, String password) =>
 
 /// Contrato de persistência de contas e telemetria de uso.
 ///
-/// A implementação atual ([LocalAccountsRepository]) guarda tudo neste
-/// aparelho. Migrar para um backend (Firebase) é implementar esta mesma
-/// interface e injetar a nova classe em `main.dart` — nenhuma tela muda.
+/// Duas implementações: [LocalAccountsRepository] (só este aparelho) e
+/// `FirebaseAccountsRepository` (contas e uso compartilhados). A escolha é feita
+/// em `main.dart` conforme o Firebase inicializa ou não. Nenhuma tela conhece a
+/// implementação concreta.
 abstract class AccountsRepository {
-  Future<void> init();
+  /// [onChanged] é chamado quando a lista de contas ou de eventos muda por fora
+  /// (ex.: sincronização do Firestore), para a UI se atualizar.
+  Future<void> init({void Function()? onChanged});
+
+  /// Autentica uma conta comum. `null` quando e-mail/senha não conferem ou a
+  /// conta está bloqueada/removida.
+  Future<AdminUser?> authenticate(String email, String password);
+
+  /// Garante que a conta master esteja autenticada no backend. Retorna `null`
+  /// em caso de sucesso ou uma mensagem de erro.
+  Future<String?> signInMaster(String email, String password);
+
+  Future<void> signOut();
 
   List<AdminUser> get users;
-  AdminUser? userByEmail(String email);
-  AdminUser? authenticate(String email, String password);
   Future<void> saveUser(AdminUser user);
   Future<void> deleteUser(String id);
+
+  /// Dispara e-mail de redefinição de senha (no-op no modo local).
+  Future<void> sendPasswordReset(String email);
 
   List<UsageEvent> get events;
   Future<void> recordEvent(UsageEvent event);
   Future<void> clearEvents();
 }
 
+/// Tudo neste aparelho, via [Storage]/SharedPreferences.
 class LocalAccountsRepository implements AccountsRepository {
   LocalAccountsRepository(this._storage);
 
   final Storage _storage;
 
   @override
-  Future<void> init() async {}
+  Future<void> init({void Function()? onChanged}) async {}
 
-  @override
-  List<AdminUser> get users => _storage.adminUsers;
-
-  @override
-  AdminUser? userByEmail(String email) {
+  AdminUser? _userByEmail(String email) {
     final target = email.trim().toLowerCase();
     for (final u in users) {
       if (u.email.trim().toLowerCase() == target) return u;
@@ -48,11 +59,23 @@ class LocalAccountsRepository implements AccountsRepository {
   }
 
   @override
-  AdminUser? authenticate(String email, String password) {
-    final u = userByEmail(email);
+  Future<AdminUser?> authenticate(String email, String password) async {
+    final u = _userByEmail(email);
     if (u == null || u.password != password) return null;
     return u;
   }
+
+  @override
+  Future<String?> signInMaster(String email, String password) async => null;
+
+  @override
+  Future<void> signOut() async {}
+
+  @override
+  Future<void> sendPasswordReset(String email) async {}
+
+  @override
+  List<AdminUser> get users => _storage.adminUsers;
 
   @override
   Future<void> saveUser(AdminUser user) async {

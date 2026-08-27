@@ -20,14 +20,14 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       TextEditingController(text: widget.user?.name ?? '');
   late final TextEditingController _email =
       TextEditingController(text: widget.user?.email ?? '');
-  late final TextEditingController _pass =
-      TextEditingController(text: widget.user?.password ?? '');
+  final TextEditingController _pass = TextEditingController();
   late final TextEditingController _m3u =
       TextEditingController(text: widget.user?.m3uUrl ?? '');
 
   late UserPlan _plan = widget.user?.plan ?? UserPlan.mensal;
   late UserStatus _status = widget.user?.status ?? UserStatus.active;
   bool _obscure = true;
+  bool _busy = false;
   String? _error;
 
   bool get _isEdit => widget.user != null;
@@ -50,7 +50,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       setState(() => _error = 'Informe um e-mail válido.');
       return;
     }
-    if (pass.length < 4) {
+    if (!_isEdit && pass.length < 4) {
       setState(() => _error = 'A senha precisa de pelo menos 4 caracteres.');
       return;
     }
@@ -61,9 +61,8 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
 
     final now = DateTime.now();
     final base = widget.user;
-    final expiresAt = _plan.days == null
-        ? null
-        : now.add(Duration(days: _plan.days!));
+    final expiresAt =
+        _plan.days == null ? null : now.add(Duration(days: _plan.days!));
 
     final user = AdminUser(
       id: base?.id ?? 'u${now.microsecondsSinceEpoch}',
@@ -77,45 +76,91 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       expiresAt: expiresAt,
     );
 
-    await context.read<AppState>().saveAdminUser(user);
-    if (!mounted) return;
-    Navigator.of(context).pop();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<AppState>().saveAdminUser(user);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = _friendly('$e');
+      });
+    }
+  }
+
+  String _friendly(String raw) {
+    if (raw.contains('email-already-in-use')) {
+      return 'Já existe uma conta com esse e-mail.';
+    }
+    if (raw.contains('invalid-email')) return 'E-mail inválido.';
+    if (raw.contains('weak-password')) return 'Senha muito fraca.';
+    if (raw.contains('network')) return 'Sem conexão com o servidor.';
+    return 'Não foi possível salvar: $raw';
+  }
+
+  Future<void> _resetPassword() async {
+    try {
+      await context.read<AppState>().accounts.sendPasswordReset(_email.text);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('E-mail de redefinição enviado.')),
+      );
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Falha ao enviar: $e')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEdit ? 'Editar conta' : 'Nova conta'),
-      ),
+      appBar: AppBar(title: Text(_isEdit ? 'Editar conta' : 'Nova conta')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           _field('Nome', _name, hint: 'Como identificar essa pessoa'),
           _field('E-mail', _email,
               hint: 'usuario@email.com',
-              keyboard: TextInputType.emailAddress),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: TextField(
-              controller: _pass,
-              obscureText: _obscure,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: 'Senha',
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscure
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                    size: 18,
+              keyboard: TextInputType.emailAddress,
+              enabled: !_isEdit),
+          if (!_isEdit)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextField(
+                controller: _pass,
+                obscureText: _obscure,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: 'Senha',
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscure
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      size: 18,
+                    ),
+                    onPressed: () => setState(() => _obscure = !_obscure),
                   ),
-                  onPressed: () => setState(() => _obscure = !_obscure),
                 ),
               ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: OutlinedButton.icon(
+                onPressed: _resetPassword,
+                icon: const Icon(Icons.mail_outline, size: 18),
+                label: const Text('Enviar redefinição de senha'),
+              ),
             ),
-          ),
           _field('Lista M3U / M3U8', _m3u,
               hint: 'http://servidor.com/get.php?...',
               keyboard: TextInputType.url),
@@ -146,8 +191,12 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
           ],
           const SizedBox(height: 22),
           FilledButton(
-            onPressed: _save,
-            child: Text(_isEdit ? 'Salvar alterações' : 'Criar conta'),
+            onPressed: _busy ? null : _save,
+            child: Text(_busy
+                ? 'Salvando…'
+                : _isEdit
+                    ? 'Salvar alterações'
+                    : 'Criar conta'),
           ),
           const SizedBox(height: 10),
           const Text(
@@ -165,12 +214,14 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
     TextEditingController controller, {
     String hint = '',
     TextInputType? keyboard,
+    bool enabled = true,
   }) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,
+          enabled: enabled,
           autocorrect: false,
           enableSuggestions: false,
           decoration: InputDecoration(labelText: label, hintText: hint),

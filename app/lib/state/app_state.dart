@@ -88,7 +88,7 @@ class AppState extends ChangeNotifier {
     if (_booted) return;
     _booted = true;
 
-    await _accounts.init();
+    await _accounts.init(onChanged: notifyListeners);
     await _tryAutoLogin();
 
     playlist = _storage.playlist;
@@ -661,6 +661,8 @@ class AppState extends ChangeNotifier {
     if (e.isEmpty || password.isEmpty) return 'Informe e-mail e senha.';
 
     if (isMasterCredential(e, password)) {
+      final err = await _accounts.signInMaster(e, password);
+      if (err != null) return err;
       session = const SessionUser(email: kMasterEmail, isMaster: true);
       masterAppMode = false;
       await _remember(remember, kMasterEmail, password);
@@ -668,7 +670,7 @@ class AppState extends ChangeNotifier {
       return null;
     }
 
-    final user = _accounts.authenticate(e, password);
+    final user = await _accounts.authenticate(e, password);
     if (user == null) return 'E-mail ou senha inválidos.';
     if (!user.isActive) {
       return 'Conta ${user.status.label.toLowerCase()} ou expirada. Fale com o administrador.';
@@ -692,13 +694,20 @@ class AppState extends ChangeNotifier {
   Future<void> _tryAutoLogin() async {
     final e = _storage.rememberedEmail;
     final p = _storage.rememberedPassword;
-    if (e == null || p == null || e.isEmpty) return;
-
-    if (isMasterCredential(e, p)) {
-      session = const SessionUser(email: kMasterEmail, isMaster: true);
+    if (e == null || p == null || e.isEmpty) {
+      // Sem "manter conectado": encerra qualquer sessão persistida do backend.
+      await _accounts.signOut();
       return;
     }
-    final user = _accounts.authenticate(e, p);
+
+    if (isMasterCredential(e, p)) {
+      final err = await _accounts.signInMaster(e, p);
+      if (err == null) {
+        session = const SessionUser(email: kMasterEmail, isMaster: true);
+      }
+      return;
+    }
+    final user = await _accounts.authenticate(e, p);
     if (user != null && user.isActive) {
       session = SessionUser(email: user.email, account: user);
       _pendingAccount = user;
@@ -723,6 +732,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> logout() async {
     await _storage.clearRememberedLogin();
+    await _accounts.signOut();
     session = null;
     masterAppMode = false;
     _adultUnlocked = false;
