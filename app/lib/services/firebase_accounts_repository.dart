@@ -146,11 +146,22 @@ class FirebaseAccountsRepository implements AccountsRepository {
         }
 
         if (!signedInWithLegacy) {
-          if (err.code == 'user-not-found') {
+          // Com a proteção contra enumeração de e-mail (padrão nos projetos
+          // novos), o Firebase devolve 'invalid-credential' tanto para senha
+          // errada quanto para conta inexistente. Então tentamos CRIAR a conta
+          // master; se o e-mail já existir, aí sim a senha está errada.
+          try {
             await _auth.createUserWithEmailAndPassword(
                 email: e, password: password);
-          } else {
-            return 'Senha master incorreta.';
+          } on FirebaseAuthException catch (e2) {
+            if (e2.code == 'email-already-in-use') {
+              return 'Senha master incorreta.';
+            }
+            if (e2.code == 'operation-not-allowed') {
+              return 'Ative "E-mail/Senha" em Authentication no console do '
+                  'Firebase para criar o acesso master.';
+            }
+            rethrow;
           }
         }
       }
