@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git push *)",
-      "PowerShell($gh = Get-Command gh -ErrorAction SilentlyContinue; if \\($gh\\) { $gh.Source } else { $c = \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\"; if \\(Test-Path $c\\) { $c } else { \"gh not found\" } })"
-    ]
-  }
-}
