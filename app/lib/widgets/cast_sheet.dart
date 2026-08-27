@@ -109,7 +109,9 @@ class _CastSheetState extends State<_CastSheet> {
             ),
             const SizedBox(height: 4),
             Text(
-              'A TV precisa estar no mesmo Wi-Fi do celular.',
+              'A TV precisa estar no mesmo Wi-Fi do celular. Só aparecem '
+              'Chromecast, Android TV, Google TV e TVs com Chromecast embutido — '
+              'TVs Samsung/LG com sistema próprio não são detectadas aqui.',
               style: TextStyle(fontSize: 11.5, color: AppColors.muted),
             ),
             if (CastService.isRiskyFormat(widget.item.url)) ...[
@@ -144,20 +146,34 @@ class _CastSheetState extends State<_CastSheet> {
                   final devices = snapshot.data ?? const <GoogleCastDevice>[];
                   if (devices.isEmpty) {
                     return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 26),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      padding: const EdgeInsets.symmetric(vertical: 22),
+                      child: Column(
                         children: [
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Procurando aparelhos na rede…',
+                                style: TextStyle(
+                                    fontSize: 12.5, color: AppColors.muted),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Procurando aparelhos na rede…',
-                            style: TextStyle(
-                                fontSize: 12.5, color: AppColors.muted),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () {
+                              _cast.stopDiscovery();
+                              _cast.startDiscovery();
+                            },
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Procurar de novo'),
                           ),
                         ],
                       ),

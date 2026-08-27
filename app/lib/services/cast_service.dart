@@ -78,6 +78,10 @@ class CastService {
   }
 
   /// Conecta e já manda o item tocar na TV.
+  ///
+  /// Tem timeout em cada etapa: sem isso, quando a TV aceita a conexão mas o
+  /// vídeo não carrega (formato, bloqueio do provedor), o app fica preso na
+  /// "tela azul do Chromecast" para sempre.
   Future<void> castItem(
     GoogleCastDevice device,
     MediaItem item, {
@@ -87,28 +91,72 @@ class CastService {
       throw const CastException('Transmissão indisponível neste aparelho');
     }
 
-    await GoogleCastSessionManager.instance.startSessionWithDevice(device);
-    await GoogleCastRemoteMediaClient.instance.loadMedia(
-      GoogleCastMediaInformationIOS(
-        // O receptor padrão do Chromecast usa contentId como URL de mídia.
-        contentId: item.url,
-        streamType: item.kind == MediaKind.live
-            ? CastMediaStreamType.live
-            : CastMediaStreamType.buffered,
-        contentUrl: Uri.parse(item.url),
-        contentType: contentTypeFor(item.url),
-        metadata: GoogleCastMovieMediaMetadata(
-          title: item.name,
-          subtitle: item.group,
-          images: [
-            if (item.logo.isNotEmpty && item.logo.startsWith('http'))
-              GoogleCastImage(url: Uri.parse(item.logo)),
-          ],
-        ),
-      ),
-      autoPlay: true,
-      playPosition: position,
-    );
+    try {
+      await GoogleCastSessionManager.instance
+          .startSessionWithDevice(device)
+          .timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      await _safeDisconnect();
+      throw const CastException(
+        'A TV não respondeu à conexão. Confirme que ela está ligada e no '
+        'mesmo Wi-Fi do celular.',
+      );
+    } on Object catch (e) {
+      await _safeDisconnect();
+      throw CastException('Não foi possível conectar na TV: ${_short(e)}');
+    }
+
+    try {
+      await GoogleCastRemoteMediaClient.instance
+          .loadMedia(
+            GoogleCastMediaInformationIOS(
+              // O receptor padrão do Chromecast usa contentId como URL de mídia.
+              contentId: item.url,
+              streamType: item.kind == MediaKind.live
+                  ? CastMediaStreamType.live
+                  : CastMediaStreamType.buffered,
+              contentUrl: Uri.parse(item.url),
+              contentType: contentTypeFor(item.url),
+              metadata: GoogleCastMovieMediaMetadata(
+                title: item.name,
+                subtitle: item.group,
+                images: [
+                  if (item.logo.isNotEmpty && item.logo.startsWith('http'))
+                    GoogleCastImage(url: Uri.parse(item.logo)),
+                ],
+              ),
+            ),
+            autoPlay: true,
+            playPosition: position,
+          )
+          .timeout(const Duration(seconds: 25));
+    } on TimeoutException {
+      await _safeDisconnect();
+      throw CastException(
+        isRiskyFormat(item.url)
+            ? 'Conectou na TV, mas o vídeo não abriu — este arquivo está em '
+                'MKV/AVI, que o Chromecast costuma recusar. Tente um episódio '
+                'em MP4 ou m3u8.'
+            : 'Conectou na TV, mas o vídeo não carregou. Pode ser bloqueio do '
+                'provedor da lista ou formato não suportado pelo Chromecast.',
+      );
+    } on Object catch (e) {
+      await _safeDisconnect();
+      throw CastException('A TV recusou o vídeo: ${_short(e)}');
+    }
+  }
+
+  Future<void> _safeDisconnect() async {
+    try {
+      await GoogleCastSessionManager.instance.endSessionAndStopCasting();
+    } on Object catch (_) {
+      // já desconectado / sem sessão
+    }
+  }
+
+  static String _short(Object e) {
+    final t = '$e'.replaceAll('Exception:', '').trim();
+    return t.length > 100 ? '${t.substring(0, 100)}…' : t;
   }
 
   Future<void> play() async => GoogleCastRemoteMediaClient.instance.play();

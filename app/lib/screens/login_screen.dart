@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/launcher.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -46,6 +47,75 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = err;
     });
     // Sucesso: o RootGate troca de tela sozinho ao ouvir o AppState.
+  }
+
+  Future<void> _forgotPassword() async {
+    FocusScope.of(context).unfocus();
+    final state = context.read<AppState>();
+    final email = _email.text.trim();
+    final canEmail = state.canEmailPasswordReset;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface2,
+        title: const Text('Redefinir senha'),
+        content: Text(
+          canEmail
+              ? 'Podemos enviar um link de redefinição para o seu e-mail, ou '
+                  'você fala com o administrador.'
+              : 'Sua senha é definida pelo administrador. Fale com ele para '
+                  'criar uma nova.',
+          style: TextStyle(fontSize: 13, color: AppColors.text, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Fechar'),
+          ),
+          if (canEmail && email.contains('@'))
+            TextButton(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                await _sendReset(email);
+              },
+              child: const Text('Enviar e-mail'),
+            ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Launcher.whatsapp(
+                'Esqueci minha senha do MIAU NET'
+                '${email.contains('@') ? ' (e-mail $email)' : ''}. '
+                'Pode redefinir pra mim?',
+              );
+            },
+            icon: const Icon(Icons.chat, size: 18),
+            label: const Text('WhatsApp'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _sendReset(String email) async {
+    try {
+      await context.read<AppState>().sendPasswordReset(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Se o e-mail estiver cadastrado, o link chega em minutos. '
+            'Confira o spam.',
+          ),
+        ),
+      );
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e'.replaceAll('Exception: ', ''))),
+      );
+    }
   }
 
   @override
@@ -147,6 +217,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                     strokeWidth: 2, color: Color(0xFF171207)),
                               )
                             : const Text('Entrar'),
+                      ),
+                      Align(
+                        alignment: Alignment.center,
+                        child: TextButton(
+                          onPressed: _busy ? null : _forgotPassword,
+                          child: const Text('Esqueci minha senha',
+                              style: TextStyle(fontSize: 12.5)),
+                        ),
                       ),
                     ],
                   ),

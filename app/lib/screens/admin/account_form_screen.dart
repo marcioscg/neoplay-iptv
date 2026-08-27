@@ -44,15 +44,22 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
 
   Future<void> _save() async {
     final email = _email.text.trim();
-    final pass = _pass.text;
+    final typedPass = _pass.text;
     final m3u = _m3u.text.trim();
+    final state = context.read<AppState>();
 
     if (!email.contains('@')) {
       setState(() => _error = 'Informe um e-mail válido.');
       return;
     }
-    if (!_isEdit && pass.length < 4) {
+    if (!_isEdit && typedPass.length < 4) {
       setState(() => _error = 'A senha precisa de pelo menos 4 caracteres.');
+      return;
+    }
+    // Editando: só valida a senha se o master digitou uma nova.
+    final changingPass = _isEdit && typedPass.isNotEmpty;
+    if (changingPass && typedPass.length < 4) {
+      setState(() => _error = 'A nova senha precisa de pelo menos 4 caracteres.');
       return;
     }
     if (m3u.isNotEmpty && !m3u.startsWith('http')) {
@@ -68,7 +75,8 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       id: base?.id ?? 'u${now.microsecondsSinceEpoch}',
       name: _name.text.trim(),
       email: email,
-      password: pass,
+      // Ao editar sem digitar senha nova, preserva a senha atual (não zera!).
+      password: _isEdit ? (base?.password ?? '') : typedPass,
       m3uUrl: m3u,
       plan: _plan,
       status: _status,
@@ -83,7 +91,18 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       _error = null;
     });
     try {
-      await context.read<AppState>().saveAdminUser(user);
+      await state.saveAdminUser(user);
+      if (changingPass && state.canMasterSetPassword) {
+        final err = await state.setUserPassword(user, typedPass);
+        if (err != null) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _error = err;
+          });
+          return;
+        }
+      }
       if (!mounted) return;
       Navigator.of(context).pop();
     } on Object catch (e) {
@@ -125,17 +144,80 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
 
   Future<void> _resetPassword() async {
     try {
-      await context.read<AppState>().accounts.sendPasswordReset(_email.text);
+      await context.read<AppState>().sendPasswordReset(_email.text);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('E-mail de redefinição enviado.')),
+        const SnackBar(
+          content: Text(
+            'Se o e-mail estiver cadastrado, o link chega em alguns minutos. '
+            'Peça para a pessoa conferir a caixa de spam.',
+          ),
+        ),
       );
     } on Object catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha ao enviar: $e')),
+        SnackBar(content: Text(_friendly('$e'))),
       );
     }
+  }
+
+  /// Campo de senha adaptado ao modo:
+  /// - conta nova: senha obrigatória;
+  /// - editando no modo local: campo "Nova senha" (em branco = manter);
+  /// - editando no modo Firebase: botão de e-mail de redefinição.
+  Widget _passwordField(BuildContext context) {
+    final state = context.watch<AppState>();
+
+    if (!_isEdit || state.canMasterSetPassword) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: _pass,
+          obscureText: _obscure,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: InputDecoration(
+            labelText: _isEdit ? 'Nova senha (em branco = manter)' : 'Senha',
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                size: 18,
+              ),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (state.canEmailPasswordReset) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _resetPassword,
+              icon: const Icon(Icons.mail_outline, size: 18),
+              label: const Text('Enviar e-mail de redefinição de senha'),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'O e-mail vem de noreply@iptv-f90b5.firebaseapp.com. Se não chegar, '
+              'confira o spam ou personalize o remetente em Authentication > '
+              'Templates no console do Firebase.',
+              style: TextStyle(
+                  fontSize: 11, color: AppColors.muted, height: 1.4),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   @override
@@ -150,37 +232,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
               hint: 'usuario@email.com',
               keyboard: TextInputType.emailAddress,
               enabled: !_isEdit),
-          if (!_isEdit)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: TextField(
-                controller: _pass,
-                obscureText: _obscure,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: InputDecoration(
-                  labelText: 'Senha',
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscure
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      size: 18,
-                    ),
-                    onPressed: () => setState(() => _obscure = !_obscure),
-                  ),
-                ),
-              ),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: OutlinedButton.icon(
-                onPressed: _resetPassword,
-                icon: const Icon(Icons.mail_outline, size: 18),
-                label: const Text('Enviar redefinição de senha'),
-              ),
-            ),
+          _passwordField(context),
           _field('Lista M3U / M3U8', _m3u,
               hint: 'http://servidor.com/get.php?...',
               keyboard: TextInputType.url),

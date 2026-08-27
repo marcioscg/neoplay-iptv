@@ -201,6 +201,17 @@ class FirebaseAccountsRepository implements AccountsRepository {
   }
 
   @override
+  bool get canMasterSetPassword => false;
+
+  @override
+  bool get canEmailPasswordReset => true;
+
+  @override
+  Future<String?> setPassword(AdminUser user, String newPassword) async =>
+      'No modo Firebase a senha não é trocada pelo painel. Use "Enviar e-mail '
+      'de redefinição" ou peça para a pessoa redefinir pelo link do e-mail.';
+
+  @override
   Future<void> sendPasswordReset(String email) =>
       _auth.sendPasswordResetEmail(email: email.trim());
 

@@ -848,6 +848,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------- senha das contas ----------
+  bool get canMasterSetPassword => _accounts.canMasterSetPassword;
+  bool get canEmailPasswordReset => _accounts.canEmailPasswordReset;
+
+  /// Define a senha de [user]. `null` em sucesso ou mensagem de erro.
+  Future<String?> setUserPassword(AdminUser user, String newPassword) async {
+    final err = await _accounts.setPassword(user, newPassword);
+    if (err == null) notifyListeners();
+    return err;
+  }
+
+  Future<void> sendPasswordReset(String email) =>
+      _accounts.sendPasswordReset(email);
+
   /// Renova o plano da conta por mais um período e reativa o acesso.
   Future<void> renewUser(AdminUser user) async {
     final next = user.copyWith(

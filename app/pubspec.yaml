@@ -1,7 +1,7 @@
 name: miaunet
 description: MIAUNET — Player IPTV com EPG, VOD, Séries e Painel Admin.
 publish_to: 'none'
-version: 1.0.5+8
+version: 1.0.6+9
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

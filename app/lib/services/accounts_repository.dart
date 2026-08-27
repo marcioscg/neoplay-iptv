@@ -33,7 +33,17 @@ abstract class AccountsRepository {
   Future<void> saveUser(AdminUser user);
   Future<void> deleteUser(String id);
 
-  /// Dispara e-mail de redefinição de senha (no-op no modo local).
+  /// O master consegue definir a senha de uma conta direto pelo painel?
+  /// `true` no modo local; `false` no Firebase (lá a troca é por e-mail).
+  bool get canMasterSetPassword;
+
+  /// Este backend envia e-mail de redefinição de senha? `false` no modo local.
+  bool get canEmailPasswordReset;
+
+  /// Define uma nova senha para [user]. `null` em sucesso ou uma mensagem.
+  Future<String?> setPassword(AdminUser user, String newPassword);
+
+  /// Dispara e-mail de redefinição de senha (no modo local lança erro claro).
   Future<void> sendPasswordReset(String email);
 
   /// Registra o aparelho e o momento do último acesso de uma conta.
@@ -80,7 +90,28 @@ class LocalAccountsRepository implements AccountsRepository {
   Future<void> signOut() async {}
 
   @override
-  Future<void> sendPasswordReset(String email) async {}
+  bool get canMasterSetPassword => true;
+
+  @override
+  bool get canEmailPasswordReset => false;
+
+  @override
+  Future<String?> setPassword(AdminUser user, String newPassword) async {
+    final list = users.toList();
+    final i = list.indexWhere((u) => u.id == user.id);
+    if (i < 0) return 'Conta não encontrada neste aparelho.';
+    list[i] = list[i].copyWith(password: newPassword);
+    await _storage.saveAdminUsers(list);
+    return null;
+  }
+
+  @override
+  Future<void> sendPasswordReset(String email) async {
+    throw Exception(
+      'Sem servidor de e-mail no modo local. Defina a nova senha da conta '
+      'direto no painel (campo "Nova senha" ao editar a conta).',
+    );
+  }
 
   @override
   Future<void> reportDevice(String userId, String device) async {

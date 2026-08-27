@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Regras do Firestore do MIAU NET (projeto iptv-f90b5).
+// Cole isto em Firestore Database > Regras > Publicar.
+//
+// Modelo: o e-mail do master tem acesso amplo; cada conta comum só enxerga o
+// próprio perfil e só pode gravar o próprio "último acesso" (aparelho/data).
+// Qualquer conta autenticada registra eventos de uso e lê a tabela de preços.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMaster() {
+      return request.auth != null
+        && request.auth.token.email == 'marcioscg@hotmail.com';
+    }
+
+    function touchingOnlyDevice() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['lastDevice', 'lastSeenAt']);
+    }
+
+    // Perfis das contas.
+    match /users/{uid} {
+      // Master lê/lista tudo; a pessoa lê só o próprio doc.
+      allow get: if isMaster() || request.auth.uid == uid;
+      allow list: if isMaster();
+
+      // Master cria/edita/exclui (exclusão é marcar deleted=true).
+      allow create, delete: if isMaster();
+      allow update: if isMaster()
+        || (request.auth.uid == uid && touchingOnlyDevice());
+    }
+
+    // Telemetria de uso.
+    match /usage_events/{eventId} {
+      allow create: if request.auth != null;      // qualquer conta registra
+      allow read, list, delete: if isMaster();     // só o master consulta/limpa
+      allow update: if false;
+    }
+
+    // Configuração compartilhada (tabela de preços dos planos).
+    match /config/{doc} {
+      allow read: if request.auth != null;
+      allow write: if isMaster();
+    }
+  }
+}
