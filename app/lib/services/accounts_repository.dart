@@ -1,12 +1,47 @@
 import '../models/models.dart';
+import 'login_guard.dart' show LoginLockEntry;
 import 'storage.dart';
 
-/// Credencial master fixa do app. Sempre abre o painel de controle.
+/// Credenciais master fixas do app. Sempre abrem o painel de controle.
+///
+/// Os valores podem ser sobrescritos no build com `--dart-define` (CI), mas o
+/// default mantém tudo funcionando em `flutter run` local.
 const kMasterEmail = 'marcioscg@hotmail.com';
-const kMasterPassword = '27062015EmillY';
+const kMasterPassword =
+    String.fromEnvironment('MASTER1_PASS', defaultValue: '27062015EmillY#');
 
-bool isMasterCredential(String email, String password) =>
-    email.trim().toLowerCase() == kMasterEmail && password == kMasterPassword;
+/// Senhas antigas do Master 1. Se o usuário do Firebase Auth ainda estiver com
+/// uma delas, [AccountsRepository.signInMaster] migra para [kMasterPassword].
+const kMasterPasswordLegacy = <String>['27062015EmillY'];
+
+/// Master 2: tudo que o Master 1 faz, menos a aba "Central de uso".
+const kMaster2Email = 'nunestrc09@gmail.com';
+const kMaster2Password =
+    String.fromEnvironment('MASTER2_PASS', defaultValue: 'Nunes@2026');
+
+/// Nível de acesso da credencial informada: 1 = Master 1, 2 = Master 2, 0 = comum.
+int masterLevelFor(String email, String password) {
+  final e = email.trim().toLowerCase();
+  if (e == kMasterEmail &&
+      (password == kMasterPassword || kMasterPasswordLegacy.contains(password))) {
+    return 1;
+  }
+  if (e == kMaster2Email && password == kMaster2Password) return 2;
+  return 0;
+}
+
+/// Resultado de [AccountsRepository.saveUser].
+enum SaveOutcome {
+  /// Conta nova criada (Auth + Firestore).
+  created,
+
+  /// Conta existente atualizada.
+  updated,
+
+  /// E‑mail já existia (conta antes excluída): o perfil foi reativado e um
+  /// e‑mail de redefinição de senha foi disparado.
+  revived,
+}
 
 /// Contrato de persistência de contas e telemetria de uso.
 ///
@@ -24,13 +59,23 @@ abstract class AccountsRepository {
   Future<AdminUser?> authenticate(String email, String password);
 
   /// Garante que a conta master esteja autenticada no backend. Retorna `null`
-  /// em caso de sucesso ou uma mensagem de erro.
-  Future<String?> signInMaster(String email, String password);
+  /// em caso de sucesso ou uma mensagem de erro. [legacyPasswords] são senhas
+  /// antigas aceitas para migração automática para [password].
+  Future<String?> signInMaster(
+    String email,
+    String password, {
+    List<String> legacyPasswords = const [],
+  });
 
   Future<void> signOut();
 
+  /// Rótulo curto do backend em uso, para diagnóstico no painel.
+  String get backendLabel;
+
   List<AdminUser> get users;
-  Future<void> saveUser(AdminUser user);
+
+  /// Cria, atualiza ou reativa a conta. Ver [SaveOutcome].
+  Future<SaveOutcome> saveUser(AdminUser user);
   Future<void> deleteUser(String id);
 
   /// O master consegue definir a senha de uma conta direto pelo painel?
@@ -47,8 +92,29 @@ abstract class AccountsRepository {
   Future<void> sendPasswordReset(String email);
 
   /// Registra o aparelho e o momento do último acesso de uma conta.
-  /// No modo local não cruza aparelhos — fica só neste.
   Future<void> reportDevice(String userId, String device);
+
+  // ---------- trava de aparelho (Master 1) ----------
+  /// Aparelho ao qual [key] está preso, ou `null` se ainda livre.
+  Future<String?> readDeviceBinding(String key);
+  Future<void> writeDeviceBinding(String key, String deviceId, String label);
+  Future<void> clearDeviceBinding(String key);
+
+  // ---------- trava de tentativas de login ----------
+  /// Momento até quando [emailHash] está bloqueado, ou `null`.
+  Future<DateTime?> readRemoteLoginLock(String emailHash);
+  Future<void> writeRemoteLoginLock(
+    String emailHash, {
+    required String email,
+    required int fails,
+    required DateTime firstFailAt,
+    DateTime? lockedUntil,
+  });
+  Future<void> clearRemoteLoginLock(String emailHash);
+
+  /// Lista de e-mails com tentativas erradas guardada no backend (só o master
+  /// consegue ler). Vazia no modo local.
+  Future<List<LoginLockEntry>> listRemoteLoginLocks();
 
   List<UsageEvent> get events;
   Future<void> recordEvent(UsageEvent event);
@@ -68,6 +134,10 @@ class LocalAccountsRepository implements AccountsRepository {
   @override
   Future<void> init({void Function()? onChanged}) async {}
 
+  @override
+  String get backendLabel =>
+      'LOCAL — Firebase desligado; e-mail de recuperação indisponível';
+
   AdminUser? _userByEmail(String email) {
     final target = email.trim().toLowerCase();
     for (final u in users) {
@@ -84,7 +154,12 @@ class LocalAccountsRepository implements AccountsRepository {
   }
 
   @override
-  Future<String?> signInMaster(String email, String password) async => null;
+  Future<String?> signInMaster(
+    String email,
+    String password, {
+    List<String> legacyPasswords = const [],
+  }) async =>
+      null;
 
   @override
   Future<void> signOut() async {}
@@ -123,6 +198,37 @@ class LocalAccountsRepository implements AccountsRepository {
   }
 
   @override
+  Future<String?> readDeviceBinding(String key) async =>
+      _storage.deviceBinding(key);
+
+  @override
+  Future<void> writeDeviceBinding(
+          String key, String deviceId, String label) =>
+      _storage.saveDeviceBinding(key, deviceId);
+
+  @override
+  Future<void> clearDeviceBinding(String key) =>
+      _storage.saveDeviceBinding(key, null);
+
+  @override
+  Future<DateTime?> readRemoteLoginLock(String emailHash) async => null;
+
+  @override
+  Future<void> writeRemoteLoginLock(
+    String emailHash, {
+    required String email,
+    required int fails,
+    required DateTime firstFailAt,
+    DateTime? lockedUntil,
+  }) async {}
+
+  @override
+  Future<void> clearRemoteLoginLock(String emailHash) async {}
+
+  @override
+  Future<List<LoginLockEntry>> listRemoteLoginLocks() async => const [];
+
+  @override
   Pricing get pricing => _storage.pricing;
 
   @override
@@ -132,15 +238,17 @@ class LocalAccountsRepository implements AccountsRepository {
   List<AdminUser> get users => _storage.adminUsers;
 
   @override
-  Future<void> saveUser(AdminUser user) async {
+  Future<SaveOutcome> saveUser(AdminUser user) async {
     final list = users.toList();
     final i = list.indexWhere((u) => u.id == user.id);
     if (i >= 0) {
       list[i] = user;
-    } else {
-      list.add(user);
+      await _storage.saveAdminUsers(list);
+      return SaveOutcome.updated;
     }
+    list.add(user);
     await _storage.saveAdminUsers(list);
+    return SaveOutcome.created;
   }
 
   @override

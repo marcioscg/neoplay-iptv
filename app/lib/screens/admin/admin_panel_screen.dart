@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/models.dart';
+import '../../services/login_guard.dart' show LoginLockEntry;
 import '../../state/app_state.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
@@ -17,9 +18,24 @@ class AdminPanelScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    // Só o Master 1 vê a "Central de uso".
+    final showUsage = state.canViewUsage;
+
+    final tabs = <Tab>[
+      const Tab(text: 'Contas'),
+      if (showUsage) const Tab(text: 'Central de uso'),
+      const Tab(text: 'Pagamentos'),
+      const Tab(text: 'Faturamento'),
+    ];
+    final views = <Widget>[
+      _AccountsTab(state: state),
+      if (showUsage) const UsageDashboard(),
+      const PaymentsTab(),
+      const BillingTab(),
+    ];
 
     return DefaultTabController(
-      length: 4,
+      length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Painel de controle'),
@@ -35,25 +51,13 @@ class AdminPanelScreen extends StatelessWidget {
               onPressed: () => context.read<AppState>().logout(),
             ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
-            tabs: [
-              Tab(text: 'Contas'),
-              Tab(text: 'Central de uso'),
-              Tab(text: 'Pagamentos'),
-              Tab(text: 'Faturamento'),
-            ],
+            tabs: tabs,
           ),
         ),
-        body: TabBarView(
-          children: [
-            _AccountsTab(state: state),
-            const UsageDashboard(),
-            const PaymentsTab(),
-            const BillingTab(),
-          ],
-        ),
+        body: TabBarView(children: views),
       ),
     );
   }
@@ -67,6 +71,7 @@ class _AccountsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final users = state.adminUsers;
     final alerts = [...state.expiredUsers, ...state.expiringSoonUsers];
+    final isMaster2 = state.session?.masterLevel == 2;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
@@ -74,22 +79,39 @@ class _AccountsTab extends StatelessWidget {
         icon: const Icon(Icons.person_add_alt),
         label: const Text('Nova conta'),
       ),
-      body: users.isEmpty
-          ? const EmptyState(
-              icon: Icons.group_outlined,
-              title: 'Nenhuma conta cadastrada',
-              message:
-                  'Toque em "Nova conta" para criar um acesso com e-mail, senha '
-                  'e a lista M3U que vai rodar no app da pessoa.',
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 88),
+        children: [
+          if (alerts.isNotEmpty) _RenewalAlerts(users: alerts),
+          if (users.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+              child: Text(
+                'Nenhuma conta cadastrada. Toque em "Nova conta" para criar um '
+                'acesso com e-mail, senha e a lista M3U da pessoa.',
+                style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+              ),
             )
-          : ListView(
-              padding: const EdgeInsets.only(bottom: 88),
-              children: [
-                if (alerts.isNotEmpty) _RenewalAlerts(users: alerts),
-                const SectionLabel('Todas as contas'),
-                ...users.map((u) => _AccountRow(user: u)),
-              ],
+          else ...[
+            const SectionLabel('Todas as contas'),
+            ...users.map((u) => _AccountRow(user: u)),
+          ],
+          const SectionLabel('E-mails bloqueados / tentativas'),
+          _LoginLocks(state: state),
+          if (isMaster2) ...[
+            const SectionLabel('Master 1'),
+            _Master1BindingRelease(state: state),
+          ],
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            child: Text(
+              'Backend: ${state.accounts.backendLabel}',
+              style: const TextStyle(fontSize: 11, color: AppColors.muted),
             ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -134,6 +156,8 @@ class _RenewalAlerts extends StatelessWidget {
           ...users.map((u) {
             final expired = u.isExpired;
             final days = u.daysLeft ?? 0;
+            // Vermelho quando venceu ou falta 3 dias ou menos.
+            final urgent = expired || days <= 3;
             return ListTile(
               dense: true,
               title: Text(u.name.isEmpty ? u.email : u.name,
@@ -150,6 +174,8 @@ class _RenewalAlerts extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(0, 34),
                   padding: const EdgeInsets.symmetric(horizontal: 14),
+                  backgroundColor: urgent ? AppColors.bad : null,
+                  foregroundColor: urgent ? Colors.white : null,
                 ),
                 onPressed: () => _confirmRenew(context, u),
                 child: const Text('Renovar'),
@@ -300,7 +326,11 @@ Future<void> _confirmDelete(BuildContext context, AdminUser u) async {
     builder: (ctx) => AlertDialog(
       backgroundColor: AppColors.surface2,
       title: const Text('Excluir conta'),
-      content: Text('Remover o acesso de ${u.email}?'),
+      content: Text(
+        'Remover o acesso de ${u.email}?\n\n'
+        'O e-mail continua reservado no servidor. Se recadastrar depois com o '
+        'mesmo e-mail, a conta é reativada e a pessoa redefine a senha por e-mail.',
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -315,5 +345,229 @@ Future<void> _confirmDelete(BuildContext context, AdminUser u) async {
   );
   if (ok == true && context.mounted) {
     await context.read<AppState>().deleteAdminUser(u.id);
+  }
+}
+
+/// Lista de e-mails com senhas erradas: mostra quem está bloqueado (24 h) e
+/// quem só acumulou tentativas, com botão para liberar cada um. Também tem um
+/// campo para liberar um e-mail digitado à mão.
+class _LoginLocks extends StatefulWidget {
+  const _LoginLocks({required this.state});
+  final AppState state;
+
+  @override
+  State<_LoginLocks> createState() => _LoginLocksState();
+}
+
+class _LoginLocksState extends State<_LoginLocks> {
+  final _email = TextEditingController();
+  late Future<List<LoginLockEntry>> _future;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.state.listLoginLocks();
+  }
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  void _reload() {
+    setState(() => _future = widget.state.listLoginLocks());
+  }
+
+  Future<void> _unlock(String email) async {
+    setState(() => _busy = true);
+    await widget.state.unlockLoginAttempts(email);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _reload();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('"$email" liberado.')),
+    );
+  }
+
+  Future<void> _unlockTyped() async {
+    final email = _email.text.trim().toLowerCase();
+    if (!email.contains('@')) return;
+    _email.clear();
+    await _unlock(email);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '3 senhas erradas bloqueiam o e-mail por 24 h. Libere quem '
+                  'quiser; deixe os outros como estão.',
+                  style: TextStyle(
+                      fontSize: 11.5, color: AppColors.muted, height: 1.4),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Atualizar',
+                icon: const Icon(Icons.refresh, size: 18),
+                onPressed: _busy ? null : _reload,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          FutureBuilder<List<LoginLockEntry>>(
+            future: _future,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(minHeight: 3),
+                );
+              }
+              final items = snap.data ?? const <LoginLockEntry>[];
+              if (items.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Nenhum e-mail com tentativas erradas.',
+                      style:
+                          TextStyle(fontSize: 12, color: AppColors.muted)),
+                );
+              }
+              return Column(
+                children: [for (final e in items) _row(e)],
+              );
+            },
+          ),
+          const Divider(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _email,
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Liberar e-mail (digitado)',
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                onPressed: _busy ? null : _unlockTyped,
+                child: const Text('Liberar'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(LoginLockEntry e) {
+    final locked = e.isLocked;
+    final sub = locked
+        ? 'Bloqueado — libera em ${e.hoursLeft}h'
+        : '${e.fails} tentativa${e.fails == 1 ? '' : 's'} (sem bloqueio)';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(locked ? Icons.lock_outline : Icons.warning_amber_rounded,
+              size: 16, color: locked ? AppColors.bad : AppColors.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(e.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13)),
+                Text(sub,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: locked ? AppColors.bad : AppColors.muted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            onPressed: _busy ? null : () => _unlock(e.email),
+            child: const Text('Desbloquear'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Botão (só Master 2) que remove a trava de aparelho do Master 1.
+class _Master1BindingRelease extends StatefulWidget {
+  const _Master1BindingRelease({required this.state});
+  final AppState state;
+
+  @override
+  State<_Master1BindingRelease> createState() => _Master1BindingReleaseState();
+}
+
+class _Master1BindingReleaseState extends State<_Master1BindingRelease> {
+  bool _busy = false;
+
+  Future<void> _release() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface2,
+        title: const Text('Liberar aparelho do Master 1'),
+        content: const Text(
+          'O Master 1 poderá entrar de um novo celular, que passa a ser o '
+          'aparelho travado. Continuar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Liberar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    await widget.state.clearMaster1DeviceBinding();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Trava de aparelho do Master 1 removida.')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+      child: OutlinedButton.icon(
+        onPressed: _busy ? null : _release,
+        icon: const Icon(Icons.lock_open_outlined, size: 18),
+        label: const Text('Liberar trava de aparelho do Master 1'),
+      ),
+    );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/models.dart';
+import '../../services/accounts_repository.dart';
 import '../../state/app_state.dart';
 import '../../theme.dart';
 
@@ -91,7 +92,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       _error = null;
     });
     try {
-      await state.saveAdminUser(user);
+      final outcome = await state.saveAdminUser(user);
       if (changingPass && state.canMasterSetPassword) {
         final err = await state.setUserPassword(user, typedPass);
         if (err != null) {
@@ -104,6 +105,27 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
         }
       }
       if (!mounted) return;
+      if (outcome == SaveOutcome.revived) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.surface2,
+            title: const Text('Conta reativada'),
+            content: Text(
+              'Esse e-mail já tinha sido cadastrado antes. A conta foi reativada '
+              'e enviamos um e-mail para $email definir a nova senha '
+              '(a senha antiga não pode ser reaproveitada pelo painel).',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Entendi'),
+              ),
+            ],
+          ),
+        );
+        if (!mounted) return;
+      }
       Navigator.of(context).pop();
     } on Object catch (e) {
       if (!mounted) return;
@@ -133,13 +155,19 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
   }
 
   String _friendly(String raw) {
-    if (raw.contains('email-already-in-use')) {
+    final clean = raw.replaceAll('Exception: ', '').trim();
+    if (clean.contains('email-already-in-use')) {
       return 'Já existe uma conta com esse e-mail.';
     }
-    if (raw.contains('invalid-email')) return 'E-mail inválido.';
-    if (raw.contains('weak-password')) return 'Senha muito fraca.';
-    if (raw.contains('network')) return 'Sem conexão com o servidor.';
-    return 'Não foi possível salvar: $raw';
+    if (clean.contains('invalid-email')) return 'E-mail inválido.';
+    if (clean.contains('weak-password')) return 'Senha muito fraca.';
+    if (clean.contains('network')) return 'Sem conexão com o servidor.';
+    // Mensagens já em português vindas do repositório passam direto.
+    if (RegExp(r'^[A-ZÀ-Ú].*[.!?]$').hasMatch(clean) &&
+        !clean.contains('-')) {
+      return clean;
+    }
+    return 'Não foi possível salvar. Tente de novo.';
   }
 
   Future<void> _resetPassword() async {

@@ -1,57 +1,21 @@
 import 'package:flutter/material.dart';
 
-/// Brilho efetivo da interface (claro/escuro). É a fonte da verdade tanto para
-/// o [ThemeData] do MaterialApp quanto para as cores fixas de [AppColors], que
-/// são lidas como getters para acompanharem a troca de tema em tempo real.
-///
-/// `main.dart` mantém este valor sincronizado com a escolha do usuário
-/// (sistema / claro / escuro) e com o brilho do sistema.
-final ValueNotifier<bool> appIsDark = ValueNotifier<bool>(true);
-
-/// Preferência de tema escolhida pela pessoa (persistida).
-enum AppThemeChoice { system, light, dark }
-
-extension AppThemeChoiceX on AppThemeChoice {
-  String get label => switch (this) {
-        AppThemeChoice.system => 'Do sistema',
-        AppThemeChoice.light => 'Claro',
-        AppThemeChoice.dark => 'Escuro',
-      };
-
-  static AppThemeChoice fromName(String? s) => AppThemeChoice.values.firstWhere(
-        (e) => e.name == s,
-        orElse: () => AppThemeChoice.system,
-      );
-}
-
-/// Paleta do MIAU NET. Cada cor devolve a variante clara ou escura conforme
-/// [appIsDark]. Por serem getters, deixaram de ser `const`.
+/// Paleta do MIAU NET. O app roda **sempre no tema escuro** — a troca claro/escuro
+/// foi removida na 1.0.8 (ficava instável e não era necessária). As cores voltaram
+/// a ser `const`.
 class AppColors {
-  static bool get _d => appIsDark.value;
-
-  static Color get bg => _d ? const Color(0xFF07080B) : const Color(0xFFF4F5F7);
-  static Color get card =>
-      _d ? const Color(0xFF101218) : const Color(0xFFFFFFFF);
-  static Color get surface1 =>
-      _d ? const Color(0xFF14161E) : const Color(0xFFFFFFFF);
-  static Color get surface2 =>
-      _d ? const Color(0xFF1B1E28) : const Color(0xFFEEF0F4);
-  static Color get surface3 =>
-      _d ? const Color(0xFF232733) : const Color(0xFFE1E4EA);
-  static Color get accent =>
-      _d ? const Color(0xFFFFC93C) : const Color(0xFFB97800);
-  static Color get accent2 =>
-      _d ? const Color(0xFFFF9A2E) : const Color(0xFFE0730E);
-  static Color get ok =>
-      _d ? const Color(0xFF3DDC97) : const Color(0xFF12885A);
-  static Color get bad =>
-      _d ? const Color(0xFFFF5D5D) : const Color(0xFFD23838);
-  static Color get text =>
-      _d ? const Color(0xFFF2F4F8) : const Color(0xFF13151B);
-  static Color get muted =>
-      _d ? const Color(0xFF8B92A4) : const Color(0xFF5B6472);
-  static Color get line =>
-      _d ? const Color(0x14FFFFFF) : const Color(0x14000000);
+  static const bg = Color(0xFF07080B);
+  static const card = Color(0xFF101218);
+  static const surface1 = Color(0xFF14161E);
+  static const surface2 = Color(0xFF1B1E28);
+  static const surface3 = Color(0xFF232733);
+  static const accent = Color(0xFFFFC93C);
+  static const accent2 = Color(0xFFFF9A2E);
+  static const ok = Color(0xFF3DDC97);
+  static const bad = Color(0xFFFF5D5D);
+  static const text = Color(0xFFF2F4F8);
+  static const muted = Color(0xFF8B92A4);
+  static const line = Color(0x14FFFFFF);
 
   /// Gradientes usados nos logos/capas quando não há imagem.
   static const artGradients = <List<Color>>[
@@ -67,20 +31,20 @@ class AppColors {
       artGradients[seed.hashCode.abs() % artGradients.length];
 }
 
-ThemeData buildTheme({bool dark = true}) {
-  final base = dark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true);
-  final accent = dark ? const Color(0xFFFFC93C) : const Color(0xFFB97800);
-  final accent2 = dark ? const Color(0xFFFF9A2E) : const Color(0xFFE0730E);
-  final bg = dark ? const Color(0xFF07080B) : const Color(0xFFF4F5F7);
-  final card = dark ? const Color(0xFF101218) : const Color(0xFFFFFFFF);
-  final surface1 = dark ? const Color(0xFF14161E) : const Color(0xFFFFFFFF);
-  final surface2 = dark ? const Color(0xFF1B1E28) : const Color(0xFFEEF0F4);
-  final surface3 = dark ? const Color(0xFF232733) : const Color(0xFFE1E4EA);
-  final textColor = dark ? const Color(0xFFF2F4F8) : const Color(0xFF13151B);
-  final muted = dark ? const Color(0xFF8B92A4) : const Color(0xFF5B6472);
-  final line = dark ? const Color(0x14FFFFFF) : const Color(0x14000000);
-  final appBarBg = dark ? const Color(0xFF0D0F15) : const Color(0xFFFFFFFF);
-  final bad = dark ? const Color(0xFFFF5D5D) : const Color(0xFFD23838);
+ThemeData buildTheme() {
+  final base = ThemeData.dark(useMaterial3: true);
+  const accent = Color(0xFFFFC93C);
+  const accent2 = Color(0xFFFF9A2E);
+  const bg = Color(0xFF07080B);
+  const card = Color(0xFF101218);
+  const surface2 = Color(0xFF1B1E28);
+  const surface3 = Color(0xFF232733);
+  const textColor = Color(0xFFF2F4F8);
+  const muted = Color(0xFF8B92A4);
+  const line = Color(0x14FFFFFF);
+  const appBarBg = Color(0xFF0D0F15);
+  const bad = Color(0xFFFF5D5D);
+  const surface1 = Color(0xFF14161E);
 
   return base.copyWith(
     scaffoldBackgroundColor: bg,
@@ -88,11 +52,11 @@ ThemeData buildTheme({bool dark = true}) {
       primary: accent,
       secondary: accent2,
       surface: card,
-      onPrimary: dark ? const Color(0xFF171207) : const Color(0xFFFFFFFF),
+      onPrimary: const Color(0xFF171207),
       onSurface: textColor,
       error: bad,
     ),
-    appBarTheme: AppBarTheme(
+    appBarTheme: const AppBarTheme(
       backgroundColor: appBarBg,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
@@ -102,15 +66,15 @@ ThemeData buildTheme({bool dark = true}) {
         fontSize: 18,
         fontWeight: FontWeight.w600,
       ),
-      iconTheme: IconThemeData(color: dark ? const Color(0xFFDFE3EC) : const Color(0xFF2A2E38)),
+      iconTheme: IconThemeData(color: Color(0xFFDFE3EC)),
     ),
     dividerColor: line,
-    dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
+    dividerTheme: const DividerThemeData(color: line, thickness: 1, space: 1),
     textTheme: base.textTheme.apply(
       bodyColor: textColor,
       displayColor: textColor,
     ),
-    listTileTheme: ListTileThemeData(
+    listTileTheme: const ListTileThemeData(
       tileColor: surface1,
       textColor: textColor,
       iconColor: muted,
@@ -118,26 +82,26 @@ ThemeData buildTheme({bool dark = true}) {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: surface2,
-      hintStyle: TextStyle(color: muted),
-      labelStyle: TextStyle(color: muted),
+      hintStyle: const TextStyle(color: muted),
+      labelStyle: const TextStyle(color: muted),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: line),
+        borderSide: const BorderSide(color: line),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: line),
+        borderSide: const BorderSide(color: line),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: accent, width: 1.4),
+        borderSide: const BorderSide(color: accent, width: 1.4),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: accent,
-        foregroundColor: dark ? const Color(0xFF171207) : Colors.white,
+        foregroundColor: const Color(0xFF171207),
         minimumSize: const Size.fromHeight(50),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -147,19 +111,19 @@ ThemeData buildTheme({bool dark = true}) {
       style: OutlinedButton.styleFrom(
         foregroundColor: textColor,
         minimumSize: const Size.fromHeight(50),
-        side: BorderSide(color: line),
+        side: const BorderSide(color: line),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
-    tabBarTheme: TabBarThemeData(
+    tabBarTheme: const TabBarThemeData(
       labelColor: accent,
       unselectedLabelColor: muted,
       indicatorColor: accent,
       dividerColor: line,
-      labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
-      unselectedLabelStyle: const TextStyle(fontSize: 13.5),
+      labelStyle: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
+      unselectedLabelStyle: TextStyle(fontSize: 13.5),
     ),
-    progressIndicatorTheme: ProgressIndicatorThemeData(
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
       color: accent,
       linearTrackColor: surface3,
     ),
@@ -167,7 +131,7 @@ ThemeData buildTheme({bool dark = true}) {
       thumbColor: WidgetStateProperty.resolveWith(
         (s) => s.contains(WidgetState.selected)
             ? accent
-            : (dark ? const Color(0xFF9AA2B4) : const Color(0xFFB4B9C4)),
+            : const Color(0xFF9AA2B4),
       ),
       trackColor: WidgetStateProperty.resolveWith(
         (s) => s.contains(WidgetState.selected)
@@ -175,7 +139,7 @@ ThemeData buildTheme({bool dark = true}) {
             : surface3,
       ),
     ),
-    snackBarTheme: SnackBarThemeData(
+    snackBarTheme: const SnackBarThemeData(
       backgroundColor: surface3,
       contentTextStyle: TextStyle(color: textColor),
       behavior: SnackBarBehavior.floating,

@@ -6,15 +6,18 @@ import 'package:firebase_core/firebase_core.dart';
 
 import '../models/models.dart';
 import 'accounts_repository.dart';
+import 'login_guard.dart' show LoginLockEntry;
 
 /// Contas e telemetria de uso no Firebase (Auth + Firestore).
 ///
 /// - `users/{uid}`: perfil da conta (nome, e-mail, lista M3U, plano, status).
 ///   A senha fica só no Firebase Auth, nunca no Firestore.
 /// - `usage_events/{id}`: eventos de "assistiu tal conteúdo".
+/// - `master_bindings/{hash}`: aparelho ao qual o acesso do Master 1 está preso.
+/// - `login_locks/{hash}`: trava de 24 h por 3 senhas erradas (cruza aparelhos).
 ///
 /// A conta master é um usuário normal do Auth (criado na primeira entrada);
-/// as regras do Firestore liberam leitura/escrita ampla só para o e-mail dela.
+/// as regras do Firestore liberam leitura/escrita ampla só para os e-mails dela.
 class FirebaseAccountsRepository implements AccountsRepository {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -31,6 +34,18 @@ class FirebaseAccountsRepository implements AccountsRepository {
   Future<void> init({void Function()? onChanged}) async {
     _onChanged = onChanged;
     if (_auth.currentUser != null) _attachListeners();
+  }
+
+  @override
+  String get backendLabel {
+    String project = 'iptv';
+    try {
+      project = Firebase.app().options.projectId;
+    } on Object {
+      // ignora
+    }
+    final who = _auth.currentUser?.email ?? 'não autenticado';
+    return 'Firebase (projeto $project) — $who';
   }
 
   void _attachListeners() {
@@ -99,25 +114,62 @@ class FirebaseAccountsRepository implements AccountsRepository {
   }
 
   @override
-  Future<String?> signInMaster(String email, String password) async {
+  Future<String?> signInMaster(
+    String email,
+    String password, {
+    List<String> legacyPasswords = const [],
+  }) async {
+    final e = email.trim();
     try {
       try {
-        await _auth.signInWithEmailAndPassword(
-            email: email.trim(), password: password);
-      } on FirebaseAuthException catch (e) {
-        if (e.code == 'user-not-found' ||
-            e.code == 'invalid-credential' ||
-            e.code == 'wrong-password') {
-          await _auth.createUserWithEmailAndPassword(
-              email: email.trim(), password: password);
-        } else {
-          rethrow;
+        await _auth.signInWithEmailAndPassword(email: e, password: password);
+      } on FirebaseAuthException catch (err) {
+        final recoverable = err.code == 'user-not-found' ||
+            err.code == 'invalid-credential' ||
+            err.code == 'wrong-password';
+        if (!recoverable) rethrow;
+
+        // Tenta as senhas antigas e migra para a nova.
+        var signedInWithLegacy = false;
+        for (final old in legacyPasswords) {
+          try {
+            await _auth.signInWithEmailAndPassword(email: e, password: old);
+          } on FirebaseAuthException {
+            continue;
+          }
+          signedInWithLegacy = true;
+          try {
+            await _auth.currentUser?.updatePassword(password);
+          } on FirebaseAuthException {
+            // segue logado com a senha antiga; migra numa próxima entrada
+          }
+          break;
+        }
+
+        if (!signedInWithLegacy) {
+          // Com a proteção contra enumeração de e-mail (padrão nos projetos
+          // novos), o Firebase devolve 'invalid-credential' tanto para senha
+          // errada quanto para conta inexistente. Então tentamos CRIAR a conta
+          // master; se o e-mail já existir, aí sim a senha está errada.
+          try {
+            await _auth.createUserWithEmailAndPassword(
+                email: e, password: password);
+          } on FirebaseAuthException catch (e2) {
+            if (e2.code == 'email-already-in-use') {
+              return 'Senha master incorreta.';
+            }
+            if (e2.code == 'operation-not-allowed') {
+              return 'Ative "E-mail/Senha" em Authentication no console do '
+                  'Firebase para criar o acesso master.';
+            }
+            rethrow;
+          }
         }
       }
       _attachListeners();
       return null;
-    } on FirebaseException catch (e) {
-      return 'Não foi possível entrar no Firebase: ${e.message ?? e.code}';
+    } on FirebaseException catch (err) {
+      return 'Não foi possível entrar no Firebase: ${err.message ?? err.code}';
     }
   }
 
@@ -147,33 +199,185 @@ class FirebaseAccountsRepository implements AccountsRepository {
     }
   }
 
+  // ---------- trava de aparelho ----------
+  @override
+  Future<String?> readDeviceBinding(String key) async {
+    try {
+      final snap = await _db
+          .collection('master_bindings')
+          .doc(key)
+          .get()
+          .timeout(const Duration(seconds: 8));
+      return snap.data()?['deviceId'] as String?;
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> writeDeviceBinding(
+      String key, String deviceId, String label) async {
+    try {
+      await _db.collection('master_bindings').doc(key).set({
+        'deviceId': deviceId,
+        'label': label,
+        'boundAt': DateTime.now().toIso8601String(),
+      });
+    } on FirebaseException {
+      // best-effort
+    }
+  }
+
+  @override
+  Future<void> clearDeviceBinding(String key) async {
+    try {
+      await _db.collection('master_bindings').doc(key).delete();
+    } on FirebaseException {
+      // best-effort
+    }
+  }
+
+  // ---------- trava de tentativas de login ----------
+  @override
+  Future<DateTime?> readRemoteLoginLock(String emailHash) async {
+    final snap = await _db
+        .collection('login_locks')
+        .doc(emailHash)
+        .get()
+        .timeout(const Duration(seconds: 8));
+    final v = snap.data()?['lockedUntil'];
+    return v is String ? DateTime.tryParse(v) : null;
+  }
+
+  @override
+  Future<void> writeRemoteLoginLock(
+    String emailHash, {
+    required String email,
+    required int fails,
+    required DateTime firstFailAt,
+    DateTime? lockedUntil,
+  }) async {
+    await _db.collection('login_locks').doc(emailHash).set({
+      'email': email,
+      'fails': fails,
+      'firstFailAt': firstFailAt.toIso8601String(),
+      'lockedUntil': lockedUntil?.toIso8601String(),
+    });
+  }
+
+  @override
+  Future<void> clearRemoteLoginLock(String emailHash) async {
+    try {
+      await _db.collection('login_locks').doc(emailHash).delete();
+    } on FirebaseException {
+      // best-effort
+    }
+  }
+
+  @override
+  Future<List<LoginLockEntry>> listRemoteLoginLocks() async {
+    final snap = await _db
+        .collection('login_locks')
+        .get()
+        .timeout(const Duration(seconds: 8));
+    final out = <LoginLockEntry>[];
+    for (final d in snap.docs) {
+      final m = d.data();
+      final email = (m['email'] ?? '') as String;
+      if (email.isEmpty) continue;
+      out.add(LoginLockEntry(
+        email: email,
+        fails: (m['fails'] as num? ?? 0).toInt(),
+        firstFailAt: m['firstFailAt'] is String
+            ? DateTime.tryParse(m['firstFailAt'] as String)
+            : null,
+        lockedUntil: m['lockedUntil'] is String
+            ? DateTime.tryParse(m['lockedUntil'] as String)
+            : null,
+      ));
+    }
+    return out;
+  }
+
   @override
   Pricing get pricing => _pricing;
 
   @override
   Future<void> savePricing(Pricing pricing) async {
-    _pricing = pricing;
-    await _db
-        .collection('config')
-        .doc('pricing')
-        .set(pricing.toJson(), SetOptions(merge: true));
+    if (_auth.currentUser == null) {
+      throw Exception('Sessão master expirou. Saia e entre de novo.');
+    }
+    _pricing = pricing; // otimista: a UI reflete já; o listener concilia
+    try {
+      await _db
+          .collection('config')
+          .doc('pricing')
+          .set(pricing.toJson(), SetOptions(merge: true));
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw Exception(
+          'Sem permissão para salvar. Confira as regras do Firestore '
+          '(coleção config) e se você está logado como master.',
+        );
+      }
+      throw Exception('Falha ao salvar no servidor: ${e.message ?? e.code}');
+    }
   }
 
   @override
   List<AdminUser> get users => _users;
 
+  /// Busca qualquer doc de conta com este e-mail, **incluindo os excluídos**
+  /// (o listener vivo filtra `deleted:false`, por isso a consulta é direta).
+  Future<({String uid, Map<String, dynamic> data})?> _findAnyByEmail(
+      String email) async {
+    final snap = await _db
+        .collection('users')
+        .where('email', isEqualTo: email.trim())
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    final d = snap.docs.first;
+    return (uid: d.id, data: d.data());
+  }
+
   @override
-  Future<void> saveUser(AdminUser user) async {
+  Future<SaveOutcome> saveUser(AdminUser user) async {
     final isExisting = _users.any((u) => u.id == user.id);
     if (isExisting) {
       await _db
           .collection('users')
           .doc(user.id)
           .set(_toDoc(user), SetOptions(merge: true));
-      return;
+      return SaveOutcome.updated;
     }
 
-    // Conta nova: cria no Auth por um app secundário para não deslogar o master.
+    // Conta nova. Antes de criar no Auth, vê se o e-mail já existiu (e foi
+    // excluído): sem Admin SDK não dá para apagar do Auth, então reativamos o
+    // perfil e mandamos e-mail para a pessoa definir a nova senha.
+    final existing = await _findAnyByEmail(user.email);
+    if (existing != null) {
+      if (existing.data['deleted'] != true) {
+        throw Exception('Já existe uma conta ativa com esse e-mail.');
+      }
+      final revived = _toDoc(user)
+        ..['deleted'] = false
+        ..['revivedAt'] = DateTime.now().toIso8601String()
+        ..remove('createdAt'); // preserva a data original
+      await _db
+          .collection('users')
+          .doc(existing.uid)
+          .set(revived, SetOptions(merge: true));
+      try {
+        await _auth.sendPasswordResetEmail(email: user.email.trim());
+      } on FirebaseException {
+        // segue mesmo assim; o master pode reenviar pelo formulário
+      }
+      return SaveOutcome.revived;
+    }
+
+    // Conta realmente nova: cria no Auth por um app secundário para não deslogar
+    // o master.
     final secondary = await Firebase.initializeApp(
       name: 'creator-${DateTime.now().microsecondsSinceEpoch}',
       options: Firebase.app().options,
@@ -187,6 +391,15 @@ class FirebaseAccountsRepository implements AccountsRepository {
       final uid = cred.user!.uid;
       await FirebaseAuth.instanceFor(app: secondary).signOut();
       await _db.collection('users').doc(uid).set(_toDoc(user));
+      return SaveOutcome.created;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'email-already-in-use') {
+        throw Exception(
+          'Este e-mail já existe no servidor. Recadastre pelo mesmo e-mail '
+          'para reativar a conta, ou use outro e-mail.',
+        );
+      }
+      rethrow;
     } finally {
       await secondary.delete();
     }
@@ -194,10 +407,10 @@ class FirebaseAccountsRepository implements AccountsRepository {
 
   @override
   Future<void> deleteUser(String id) async {
-    await _db
-        .collection('users')
-        .doc(id)
-        .set({'deleted': true}, SetOptions(merge: true));
+    await _db.collection('users').doc(id).set(
+      {'deleted': true, 'deletedAt': DateTime.now().toIso8601String()},
+      SetOptions(merge: true),
+    );
   }
 
   @override
@@ -212,8 +425,22 @@ class FirebaseAccountsRepository implements AccountsRepository {
       'de redefinição" ou peça para a pessoa redefinir pelo link do e-mail.';
 
   @override
-  Future<void> sendPasswordReset(String email) =>
-      _auth.sendPasswordResetEmail(email: email.trim());
+  Future<void> sendPasswordReset(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'user-not-found':
+          throw Exception('Não há conta com esse e-mail no servidor.');
+        case 'invalid-email':
+          throw Exception('E-mail inválido.');
+        case 'too-many-requests':
+          throw Exception('Muitas tentativas. Aguarde alguns minutos.');
+        default:
+          throw Exception('Não foi possível enviar: ${e.message ?? e.code}');
+      }
+    }
+  }
 
   @override
   List<UsageEvent> get events => _events;

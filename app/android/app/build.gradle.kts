@@ -64,8 +64,15 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // 1.0.8: R8 + remocao de recursos nao usados para o APK abrir mais
+            // leve. As regras -keep de Firebase/Cast/ExoPlayer estao em
+            // proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }

@@ -37,3 +37,6 @@ app/ios/Flutter/ephemeral/
 .env
 .env.*
 gs.json
+
+# Configs locais do Claude Code
+.claude/

@@ -7,13 +7,14 @@ import 'package:http/http.dart' as http;
 
 import '../models/models.dart';
 import '../services/accounts_repository.dart';
+import '../services/device_identity.dart';
 import '../services/device_label.dart';
 import '../services/genres.dart';
 import '../services/importer.dart';
+import '../services/login_guard.dart';
 import '../services/parental.dart';
 import '../services/storage.dart';
 import '../services/xtream_api.dart';
-import '../theme.dart';
 
 enum LoadStage { idle, loading, ready, error }
 
@@ -21,12 +22,24 @@ enum LoadStage { idle, loading, ready, error }
 /// lista M3U cadastrada pelo master.
 class SessionUser {
   final String email;
-  final bool isMaster;
-  final AdminUser? account;
-  const SessionUser({required this.email, this.isMaster = false, this.account});
 
-  String get displayName =>
-      account?.name.isNotEmpty == true ? account!.name : (isMaster ? 'Master' : email);
+  /// 0 = conta comum, 1 = Master 1 (acesso total), 2 = Master 2 (sem Central de uso).
+  final int masterLevel;
+  final AdminUser? account;
+  const SessionUser({
+    required this.email,
+    this.masterLevel = 0,
+    this.account,
+  });
+
+  bool get isMaster => masterLevel > 0;
+
+  /// Só o Master 1 enxerga a aba "Central de uso".
+  bool get canViewUsage => masterLevel == 1;
+
+  String get displayName => account?.name.isNotEmpty == true
+      ? account!.name
+      : (isMaster ? 'Master $masterLevel' : email);
 }
 
 /// Estado global do app: lista ativa, conteúdo importado, favoritos e busca.
@@ -36,12 +49,21 @@ class SessionUser {
 /// pré-calculados, para que nenhuma tela precise varrer milhares de itens a
 /// cada frame.
 class AppState extends ChangeNotifier {
-  AppState(this._storage, this._accounts);
+  AppState(this._storage, this._accounts)
+      : _loginGuard = LoginGuard(_storage, _accounts);
 
   final Storage _storage;
   final AccountsRepository _accounts;
+  final LoginGuard _loginGuard;
 
   AccountsRepository get accounts => _accounts;
+
+  /// Chave da trava de aparelho do Master 1 (hash do e-mail).
+  static final _master1BindingKey = LoginGuard.hashEmail(kMasterEmail);
+
+  /// Credenciais lembradas ("manter conectado"), carregadas no bootstrap para o
+  /// preenchimento automático da tela de login.
+  ({String email, String password})? rememberedCredentials;
 
   Playlist? playlist;
   LoadStage stage = LoadStage.idle;
@@ -85,18 +107,11 @@ class AppState extends ChangeNotifier {
   bool get isLogged => session != null;
   bool get isMaster => session?.isMaster ?? false;
 
+  /// Só o Master 1 vê a aba "Central de uso" do painel.
+  bool get canViewUsage => session?.canViewUsage ?? false;
+
   // ---------- controle parental ----------
   bool _adultUnlocked = false;
-
-  // ---------- tema ----------
-  AppThemeChoice _themeChoice = AppThemeChoice.system;
-  AppThemeChoice get themeChoice => _themeChoice;
-
-  Future<void> setThemeChoice(AppThemeChoice choice) async {
-    _themeChoice = choice;
-    await _storage.saveThemeChoice(choice.name);
-    notifyListeners();
-  }
 
   bool get hasPlaylist => playlist != null;
   bool get isBusy => _busy;
@@ -106,10 +121,20 @@ class AppState extends ChangeNotifier {
     if (_booted) return;
     _booted = true;
 
-    _themeChoice = AppThemeChoiceX.fromName(_storage.themeChoice);
+    // Credenciais lembradas para o preenchimento automático da tela de login.
+    final rememberedEmail = _storage.rememberedEmail;
+    if (rememberedEmail != null && rememberedEmail.isNotEmpty) {
+      final pass = await _storage.readRememberedPassword();
+      if (pass != null && pass.isNotEmpty) {
+        rememberedCredentials = (email: rememberedEmail, password: pass);
+      }
+    }
 
     await _accounts.init(onChanged: notifyListeners);
-    await _tryAutoLogin();
+    // Rede lenta não pode prender o splash: se o auto-login demorar, cai na
+    // tela de login (com os campos já preenchidos).
+    await _tryAutoLogin()
+        .timeout(const Duration(seconds: 6), onTimeout: () {});
 
     playlist = _storage.playlist;
     favorites = _storage.favorites;
@@ -595,11 +620,7 @@ class AppState extends ChangeNotifier {
   void _recordUsage(MediaItem item) {
     if (item.url.isEmpty) return; // container de série, não conta
     final s = session;
-    final email = s == null
-        ? 'local'
-        : s.isMaster
-            ? kMasterEmail
-            : s.email;
+    final email = s == null ? 'local' : s.email;
     // Episódio de série: o nome da série vem no `group`; guardamos separado
     // para o painel mostrar "Série · T01E03 · Título" e não só "T01E03".
     final isEpisode = item.kind == MediaKind.series && item.group.isNotEmpty;
@@ -724,22 +745,57 @@ class AppState extends ChangeNotifier {
     final e = email.trim();
     if (e.isEmpty || password.isEmpty) return 'Informe e-mail e senha.';
 
-    if (isMasterCredential(e, password)) {
-      final err = await _accounts.signInMaster(e, password);
-      if (err != null) return err;
-      session = const SessionUser(email: kMasterEmail, isMaster: true);
+    // Trava de força-bruta: 3 senhas erradas => 24 h.
+    final lock = await _loginGuard.check(e);
+    if (lock.locked) {
+      return 'Acesso bloqueado por tentativas erradas. Tente de novo em '
+          '${lock.hoursLeft}h ou peça liberação ao administrador.';
+    }
+
+    final level = masterLevelFor(e, password);
+    if (level > 0) {
+      final masterEmail = level == 2 ? kMaster2Email : kMasterEmail;
+      final canonical = level == 2 ? kMaster2Password : kMasterPassword;
+      final err = await _accounts.signInMaster(
+        masterEmail,
+        canonical,
+        legacyPasswords: level == 1 ? kMasterPasswordLegacy : const [],
+      );
+      if (err != null) {
+        await _loginGuard.registerFailure(e);
+        return err;
+      }
+
+      if (level == 1) {
+        final deviceErr = await _checkMaster1Device();
+        if (deviceErr != null) {
+          await _accounts.signOut();
+          return deviceErr;
+        }
+      }
+
+      await _loginGuard.clear(e);
+      session = SessionUser(email: masterEmail, masterLevel: level);
       masterAppMode = false;
-      await _remember(remember, kMasterEmail, password);
+      await _remember(remember, masterEmail, canonical);
       notifyListeners();
       return null;
     }
 
     final user = await _accounts.authenticate(e, password);
-    if (user == null) return 'E-mail ou senha inválidos.';
+    if (user == null) {
+      final after = await _loginGuard.registerFailure(e);
+      if (after.locked) {
+        return 'Muitas tentativas erradas. Acesso bloqueado por 24h — '
+            'aguarde ou peça liberação ao administrador.';
+      }
+      return 'E-mail ou senha inválidos.';
+    }
     if (!user.isActive) {
       return 'Conta ${user.status.label.toLowerCase()} ou expirada. Fale com o administrador.';
     }
 
+    await _loginGuard.clear(e);
     session = SessionUser(email: user.email, account: user);
     await _remember(remember, e, password);
     notifyListeners();
@@ -747,6 +803,54 @@ class AppState extends ChangeNotifier {
     await _applyAccountPlaylist(user);
     return null;
   }
+
+  /// Confere / grava a trava de aparelho do Master 1. `null` = liberado.
+  Future<String?> _checkMaster1Device() async {
+    try {
+      final current = await DeviceIdentity.stableId();
+      final bound = await _accounts.readDeviceBinding(_master1BindingKey);
+      if (bound == null || bound.isEmpty) {
+        final label = await DeviceLabel.resolve();
+        await _accounts.writeDeviceBinding(_master1BindingKey, current, label);
+        return null;
+      }
+      if (bound == current) return null;
+      return 'Acesso do Master 1 travado em outro aparelho. Libere pelo Master 2 '
+          '(nunestrc09@gmail.com) ou apague "master_bindings" no Firestore.';
+    } on Object {
+      // Falha ao resolver o id do aparelho: não trava (evita bloqueio por bug).
+      return null;
+    }
+  }
+
+  /// Master 2: remove a trava de aparelho do Master 1.
+  Future<void> clearMaster1DeviceBinding() =>
+      _accounts.clearDeviceBinding(_master1BindingKey);
+
+  /// Master: libera um e-mail bloqueado por tentativas erradas.
+  Future<void> unlockLoginAttempts(String email) => _loginGuard.clear(email);
+
+  /// Master: lista de e-mails com tentativas erradas (para o painel).
+  Future<List<LoginLockEntry>> listLoginLocks() => _loginGuard.listLocks();
+
+  // ---------- lembrete de mensalidade ----------
+  static String _todayKey() {
+    final d = DateTime.now();
+    return '${d.year}-${d.month}-${d.day}';
+  }
+
+  /// Conta comum com vencimento em ≤1 dia (ou já vencida) e ainda não avisada
+  /// hoje: a Home mostra um popup com o botão do WhatsApp.
+  bool get dueReminderPending {
+    final acc = session?.account;
+    if (acc == null || isMaster) return false;
+    final due = acc.isExpired || (acc.daysLeft ?? 99) <= 1;
+    if (!due) return false;
+    return _storage.lastDueReminderDate != _todayKey();
+  }
+
+  Future<void> markDueReminderShown() =>
+      _storage.setLastDueReminderDate(_todayKey());
 
   /// Anota, no perfil da conta, o aparelho e o horário deste acesso.
   Future<void> _reportDevice(AdminUser user) async {
@@ -761,24 +865,38 @@ class AppState extends ChangeNotifier {
   Future<void> _remember(bool remember, String email, String password) async {
     if (remember) {
       await _storage.saveRememberedLogin(email, password);
+      rememberedCredentials = (email: email, password: password);
     } else {
       await _storage.clearRememberedLogin();
+      rememberedCredentials = null;
     }
   }
 
   Future<void> _tryAutoLogin() async {
-    final e = _storage.rememberedEmail;
-    final p = _storage.rememberedPassword;
-    if (e == null || p == null || e.isEmpty) {
+    final creds = rememberedCredentials;
+    if (creds == null) {
       // Sem "manter conectado": encerra qualquer sessão persistida do backend.
       await _accounts.signOut();
       return;
     }
+    final e = creds.email.trim();
+    final p = creds.password;
 
-    if (isMasterCredential(e, p)) {
-      final err = await _accounts.signInMaster(e, p);
+    final level = masterLevelFor(e, p);
+    if (level > 0) {
+      final masterEmail = level == 2 ? kMaster2Email : kMasterEmail;
+      final canonical = level == 2 ? kMaster2Password : kMasterPassword;
+      final err = await _accounts.signInMaster(
+        masterEmail,
+        canonical,
+        legacyPasswords: level == 1 ? kMasterPasswordLegacy : const [],
+      );
       if (err == null) {
-        session = const SessionUser(email: kMasterEmail, isMaster: true);
+        if (level == 1 && await _checkMaster1Device() != null) {
+          await _accounts.signOut();
+          return;
+        }
+        session = SessionUser(email: masterEmail, masterLevel: level);
       }
       return;
     }
@@ -838,9 +956,10 @@ class AppState extends ChangeNotifier {
   List<AdminUser> get expiredUsers =>
       adminUsers.where((u) => u.isExpired).toList();
 
-  Future<void> saveAdminUser(AdminUser user) async {
-    await _accounts.saveUser(user);
+  Future<SaveOutcome> saveAdminUser(AdminUser user) async {
+    final outcome = await _accounts.saveUser(user);
     notifyListeners();
+    return outcome;
   }
 
   Future<void> deleteAdminUser(String userId) async {

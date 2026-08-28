@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import 'importer.dart';
+import 'secure_store.dart';
 
 /// Persistência local.
 ///
@@ -24,10 +25,13 @@ class Storage {
   static const _kUsers = 'admin_users';
   static const _kUsage = 'usage_events';
   static const _kRememberEmail = 'remember_email';
-  static const _kRememberPass = 'remember_pass';
+  static const _kRememberPass = 'remember_pass'; // legado (texto puro) — migrado
+  static const _kSecureRememberPass = 'remember_pass_secure';
   static const _kProgress = 'playback_progress';
-  static const _kThemeChoice = 'theme_choice';
   static const _kPricing = 'plan_pricing';
+  static const _kLoginFails = 'login_fails';
+  static const _kDeviceBindings = 'device_bindings';
+  static const _kDueReminderDate = 'due_reminder_date';
 
   // Chaves da versão 1.0.0, removidas na migração.
   static const _kLegacyLive = 'cache_live';
@@ -53,6 +57,16 @@ class Storage {
       await prefs.remove(_kLegacyLive);
       await prefs.remove(_kLegacyMovies);
       await prefs.remove(_kCacheAt);
+    }
+
+    // 1.0.8: o seletor de tema saiu (app é sempre escuro).
+    await prefs.remove('theme_choice');
+
+    // 1.0.8: a senha do "manter conectado" saiu do texto puro para o Keystore.
+    final legacyPass = prefs.getString(_kRememberPass);
+    if (legacyPass != null && legacyPass.isNotEmpty) {
+      await SecureStore.write(_kSecureRememberPass, legacyPass);
+      await prefs.remove(_kRememberPass);
     }
 
     return Storage(prefs, File('${dir.path}/neoplay_cache.json'));
@@ -138,17 +152,22 @@ class Storage {
   Future<void> saveHideAdult(bool hide) => _p.setBool(_kHideAdult, hide);
 
   // ---------- sessão lembrada (manter conectado) ----------
+  // O e-mail não é segredo e fica em SharedPreferences; a senha vai para o
+  // armazenamento protegido do sistema (Keystore no Android) via [SecureStore].
   String? get rememberedEmail => _p.getString(_kRememberEmail);
-  String? get rememberedPassword => _p.getString(_kRememberPass);
+
+  Future<String?> readRememberedPassword() =>
+      SecureStore.read(_kSecureRememberPass);
 
   Future<void> saveRememberedLogin(String email, String password) async {
     await _p.setString(_kRememberEmail, email);
-    await _p.setString(_kRememberPass, password);
+    await SecureStore.write(_kSecureRememberPass, password);
   }
 
   Future<void> clearRememberedLogin() async {
     await _p.remove(_kRememberEmail);
     await _p.remove(_kRememberPass);
+    await SecureStore.delete(_kSecureRememberPass);
   }
 
   // ---------- autenticação & admin ----------
@@ -253,11 +272,58 @@ class Storage {
     }
   }
 
-  // ---------- tema (claro / escuro / do sistema) ----------
-  String? get themeChoice => _p.getString(_kThemeChoice);
+  // ---------- trava de tentativas de login (item 1.0.8) ----------
+  Map<String, dynamic> get loginFails {
+    final raw = _p.getString(_kLoginFails);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final m = jsonDecode(raw);
+      return m is Map ? Map<String, dynamic>.from(m) : {};
+    } on Exception {
+      return {};
+    }
+  }
 
-  Future<void> saveThemeChoice(String name) =>
-      _p.setString(_kThemeChoice, name);
+  Future<void> saveLoginFails(Map<String, dynamic> map) =>
+      _p.setString(_kLoginFails, jsonEncode(map));
+
+  // ---------- trava de aparelho (Master 1) ----------
+  String? deviceBinding(String key) {
+    final raw = _p.getString(_kDeviceBindings);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final m = jsonDecode(raw);
+      if (m is Map && m[key] is String) return m[key] as String;
+    } on Exception {
+      // ignora
+    }
+    return null;
+  }
+
+  Future<void> saveDeviceBinding(String key, String? deviceId) async {
+    final raw = _p.getString(_kDeviceBindings);
+    Map<String, dynamic> m = {};
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final d = jsonDecode(raw);
+        if (d is Map) m = Map<String, dynamic>.from(d);
+      } on Exception {
+        m = {};
+      }
+    }
+    if (deviceId == null) {
+      m.remove(key);
+    } else {
+      m[key] = deviceId;
+    }
+    await _p.setString(_kDeviceBindings, jsonEncode(m));
+  }
+
+  // ---------- lembrete de mensalidade (mostrado 1x por dia) ----------
+  String? get lastDueReminderDate => _p.getString(_kDueReminderDate);
+
+  Future<void> setLastDueReminderDate(String yyyymmdd) =>
+      _p.setString(_kDueReminderDate, yyyymmdd);
 
   // ---------- tabela de preços dos planos (aba Pagamentos) ----------
   Pricing get pricing {

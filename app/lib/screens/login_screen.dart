@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/launcher.dart';
@@ -24,6 +25,19 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Preenchimento automático: reaproveita o "manter conectado" quando o
+    // auto-login não conseguiu entrar (rede lenta, sessão expirada).
+    final saved = context.read<AppState>().rememberedCredentials;
+    if (saved != null) {
+      _email.text = saved.email;
+      _pass.text = saved.password;
+      _remember = true;
+    }
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     _pass.dispose();
@@ -46,6 +60,10 @@ class _LoginScreenState extends State<LoginScreen> {
       _busy = false;
       _error = err;
     });
+    if (err == null) {
+      // Deixa o gerenciador de senhas do sistema oferecer salvar.
+      TextInput.finishAutofillContext();
+    }
     // Sucesso: o RootGate troca de tela sozinho ao ouvir o AppState.
   }
 
@@ -148,13 +166,18 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: AppColors.line),
                   ),
-                  child: Column(
+                  child: AutofillGroup(
+                    child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       TextField(
                         controller: _email,
                         autocorrect: false,
                         enableSuggestions: false,
+                        autofillHints: const [
+                          AutofillHints.username,
+                          AutofillHints.email,
+                        ],
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
@@ -168,6 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         obscureText: _obscure,
                         autocorrect: false,
                         enableSuggestions: false,
+                        autofillHints: const [AutofillHints.password],
                         textInputAction: TextInputAction.done,
                         onSubmitted: (_) {
                           if (!_busy) _submit();
@@ -227,6 +251,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                 ),
                 const SizedBox(height: 20),
