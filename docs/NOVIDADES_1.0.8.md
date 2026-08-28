@@ -13,9 +13,11 @@
   Para trocar de aparelho, o **Master 2** usa "Liberar trava de aparelho do
   Master 1" na aba Contas (ou apaga o documento em `master_bindings` no Firestore).
 - **Bloqueio por tentativas**: 3 senhas erradas para o mesmo e‑mail travam o
-  acesso por **24 h**. O Master libera antes disso pelo campo "Tentativas de
-  login" na aba Contas. Quando o Firebase está ligado, a trava vale em qualquer
-  aparelho.
+  acesso por **24 h**. Na aba Contas, seção **"E‑mails bloqueados / tentativas"**,
+  o Master vê a lista de e‑mails (bloqueados e os que só acumularam tentativas) e
+  **libera cada um** com um toque, ou deixa como está. Também dá para liberar um
+  e‑mail digitado à mão. Quando o Firebase está ligado, a lista e a trava valem
+  em qualquer aparelho.
 - **Excluir conta**: o e‑mail continua reservado no servidor (o Firebase não
   deixa o app apagar o usuário do Auth). Se recadastrar o mesmo e‑mail, a conta é
   **reativada** e a pessoa recebe um e‑mail para definir a nova senha — some o
@@ -31,6 +33,11 @@
   oferecer salvar/preencher.
 - A senha do "Manter conectado" saiu do texto puro e agora fica no
   **armazenamento protegido do sistema** (Keystore).
+
+## Reprodução
+
+- **A tela não apaga** durante o filme/série/canal enquanto o vídeo está
+  tocando (libera quando você pausa ou sai do player).
 
 ## App mais leve
 

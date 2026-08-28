@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/models.dart';
+import '../../services/login_guard.dart' show LoginLockEntry;
 import '../../state/app_state.dart';
 import '../../theme.dart';
 import '../../widgets/common.dart';
@@ -95,8 +96,8 @@ class _AccountsTab extends StatelessWidget {
             const SectionLabel('Todas as contas'),
             ...users.map((u) => _AccountRow(user: u)),
           ],
-          const SectionLabel('Tentativas de login'),
-          _LoginUnlock(state: state),
+          const SectionLabel('E-mails bloqueados / tentativas'),
+          _LoginLocks(state: state),
           if (isMaster2) ...[
             const SectionLabel('Master 1'),
             _Master1BindingRelease(state: state),
@@ -347,18 +348,27 @@ Future<void> _confirmDelete(BuildContext context, AdminUser u) async {
   }
 }
 
-/// Campo para o master liberar um e-mail travado por 3 senhas erradas.
-class _LoginUnlock extends StatefulWidget {
-  const _LoginUnlock({required this.state});
+/// Lista de e-mails com senhas erradas: mostra quem está bloqueado (24 h) e
+/// quem só acumulou tentativas, com botão para liberar cada um. Também tem um
+/// campo para liberar um e-mail digitado à mão.
+class _LoginLocks extends StatefulWidget {
+  const _LoginLocks({required this.state});
   final AppState state;
 
   @override
-  State<_LoginUnlock> createState() => _LoginUnlockState();
+  State<_LoginLocks> createState() => _LoginLocksState();
 }
 
-class _LoginUnlockState extends State<_LoginUnlock> {
+class _LoginLocksState extends State<_LoginLocks> {
   final _email = TextEditingController();
+  late Future<List<LoginLockEntry>> _future;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.state.listLoginLocks();
+  }
 
   @override
   void dispose() {
@@ -366,17 +376,26 @@ class _LoginUnlockState extends State<_LoginUnlock> {
     super.dispose();
   }
 
-  Future<void> _unlock() async {
-    final email = _email.text.trim();
-    if (!email.contains('@')) return;
+  void _reload() {
+    setState(() => _future = widget.state.listLoginLocks());
+  }
+
+  Future<void> _unlock(String email) async {
     setState(() => _busy = true);
     await widget.state.unlockLoginAttempts(email);
     if (!mounted) return;
     setState(() => _busy = false);
-    _email.clear();
+    _reload();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Tentativas de "$email" liberadas.')),
+      SnackBar(content: Text('"$email" liberado.')),
     );
+  }
+
+  Future<void> _unlockTyped() async {
+    final email = _email.text.trim().toLowerCase();
+    if (!email.contains('@')) return;
+    _email.clear();
+    await _unlock(email);
   }
 
   @override
@@ -386,12 +405,48 @@ class _LoginUnlockState extends State<_LoginUnlock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '3 senhas erradas bloqueiam o e-mail por 24 h. Informe o e-mail para '
-            'liberar antes disso.',
-            style: TextStyle(fontSize: 11.5, color: AppColors.muted, height: 1.4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '3 senhas erradas bloqueiam o e-mail por 24 h. Libere quem '
+                  'quiser; deixe os outros como estão.',
+                  style: TextStyle(
+                      fontSize: 11.5, color: AppColors.muted, height: 1.4),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Atualizar',
+                icon: const Icon(Icons.refresh, size: 18),
+                onPressed: _busy ? null : _reload,
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
+          FutureBuilder<List<LoginLockEntry>>(
+            future: _future,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(minHeight: 3),
+                );
+              }
+              final items = snap.data ?? const <LoginLockEntry>[];
+              if (items.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Nenhum e-mail com tentativas erradas.',
+                      style:
+                          TextStyle(fontSize: 12, color: AppColors.muted)),
+                );
+              }
+              return Column(
+                children: [for (final e in items) _row(e)],
+              );
+            },
+          ),
+          const Divider(height: 20),
           Row(
             children: [
               Expanded(
@@ -401,17 +456,58 @@ class _LoginUnlockState extends State<_LoginUnlock> {
                   autocorrect: false,
                   enableSuggestions: false,
                   decoration: const InputDecoration(
-                    labelText: 'E-mail bloqueado',
+                    labelText: 'Liberar e-mail (digitado)',
                     isDense: true,
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               FilledButton(
-                onPressed: _busy ? null : _unlock,
-                child: Text(_busy ? '...' : 'Liberar'),
+                onPressed: _busy ? null : _unlockTyped,
+                child: const Text('Liberar'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(LoginLockEntry e) {
+    final locked = e.isLocked;
+    final sub = locked
+        ? 'Bloqueado — libera em ${e.hoursLeft}h'
+        : '${e.fails} tentativa${e.fails == 1 ? '' : 's'} (sem bloqueio)';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(locked ? Icons.lock_outline : Icons.warning_amber_rounded,
+              size: 16, color: locked ? AppColors.bad : AppColors.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(e.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13)),
+                Text(sub,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: locked ? AppColors.bad : AppColors.muted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            onPressed: _busy ? null : () => _unlock(e.email),
+            child: const Text('Desbloquear'),
           ),
         ],
       ),

@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import 'login_guard.dart' show LoginLockEntry;
 import 'storage.dart';
 
 /// Credenciais master fixas do app. Sempre abrem o painel de controle.
@@ -104,11 +105,16 @@ abstract class AccountsRepository {
   Future<DateTime?> readRemoteLoginLock(String emailHash);
   Future<void> writeRemoteLoginLock(
     String emailHash, {
+    required String email,
     required int fails,
     required DateTime firstFailAt,
     DateTime? lockedUntil,
   });
   Future<void> clearRemoteLoginLock(String emailHash);
+
+  /// Lista de e-mails com tentativas erradas guardada no backend (só o master
+  /// consegue ler). Vazia no modo local.
+  Future<List<LoginLockEntry>> listRemoteLoginLocks();
 
   List<UsageEvent> get events;
   Future<void> recordEvent(UsageEvent event);
@@ -210,6 +216,7 @@ class LocalAccountsRepository implements AccountsRepository {
   @override
   Future<void> writeRemoteLoginLock(
     String emailHash, {
+    required String email,
     required int fails,
     required DateTime firstFailAt,
     DateTime? lockedUntil,
@@ -217,6 +224,9 @@ class LocalAccountsRepository implements AccountsRepository {
 
   @override
   Future<void> clearRemoteLoginLock(String emailHash) async {}
+
+  @override
+  Future<List<LoginLockEntry>> listRemoteLoginLocks() async => const [];
 
   @override
   Pricing get pricing => _storage.pricing;

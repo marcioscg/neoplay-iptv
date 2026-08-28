@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 
 import '../models/models.dart';
 import 'accounts_repository.dart';
+import 'login_guard.dart' show LoginLockEntry;
 
 /// Contas e telemetria de uso no Firebase (Auth + Firestore).
 ///
@@ -251,11 +252,13 @@ class FirebaseAccountsRepository implements AccountsRepository {
   @override
   Future<void> writeRemoteLoginLock(
     String emailHash, {
+    required String email,
     required int fails,
     required DateTime firstFailAt,
     DateTime? lockedUntil,
   }) async {
     await _db.collection('login_locks').doc(emailHash).set({
+      'email': email,
       'fails': fails,
       'firstFailAt': firstFailAt.toIso8601String(),
       'lockedUntil': lockedUntil?.toIso8601String(),
@@ -269,6 +272,31 @@ class FirebaseAccountsRepository implements AccountsRepository {
     } on FirebaseException {
       // best-effort
     }
+  }
+
+  @override
+  Future<List<LoginLockEntry>> listRemoteLoginLocks() async {
+    final snap = await _db
+        .collection('login_locks')
+        .get()
+        .timeout(const Duration(seconds: 8));
+    final out = <LoginLockEntry>[];
+    for (final d in snap.docs) {
+      final m = d.data();
+      final email = (m['email'] ?? '') as String;
+      if (email.isEmpty) continue;
+      out.add(LoginLockEntry(
+        email: email,
+        fails: (m['fails'] as num? ?? 0).toInt(),
+        firstFailAt: m['firstFailAt'] is String
+            ? DateTime.tryParse(m['firstFailAt'] as String)
+            : null,
+        lockedUntil: m['lockedUntil'] is String
+            ? DateTime.tryParse(m['lockedUntil'] as String)
+            : null,
+      ));
+    }
+    return out;
   }
 
   @override

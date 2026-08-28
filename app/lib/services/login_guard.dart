@@ -22,6 +22,31 @@ class LoginLockState {
   }
 }
 
+/// Uma linha da lista de e-mails com tentativas erradas, para o painel.
+class LoginLockEntry {
+  final String email;
+  final int fails;
+  final DateTime? firstFailAt;
+  final DateTime? lockedUntil;
+
+  const LoginLockEntry({
+    required this.email,
+    required this.fails,
+    this.firstFailAt,
+    this.lockedUntil,
+  });
+
+  bool get isLocked =>
+      lockedUntil != null && lockedUntil!.isAfter(DateTime.now());
+
+  int get hoursLeft {
+    if (lockedUntil == null) return 0;
+    final diff = lockedUntil!.difference(DateTime.now());
+    if (diff.inSeconds <= 0) return 0;
+    return diff.inMinutes ~/ 60 + 1;
+  }
+}
+
 /// Trava de força‑bruta: 3 senhas erradas para o mesmo e‑mail bloqueiam o acesso
 /// por 24 h. A contagem local vale por aparelho; quando o Firebase está ligado, um
 /// espelho em `login_locks/<hash>` cruza os aparelhos e deixa o Master 1
@@ -88,6 +113,7 @@ class LoginGuard {
     try {
       await _accounts.writeRemoteLoginLock(
         hashEmail(email),
+        email: _key(email),
         fails: fails,
         firstFailAt: _parse(entry['firstFailAt'])!,
         lockedUntil: lockedUntil,
@@ -112,6 +138,43 @@ class LoginGuard {
     } on Object {
       // best-effort
     }
+  }
+
+  /// Lista de e-mails com tentativas erradas (bloqueados ou não), juntando o que
+  /// está neste aparelho com o espelho do backend. Bloqueados primeiro.
+  Future<List<LoginLockEntry>> listLocks() async {
+    final byEmail = <String, LoginLockEntry>{};
+
+    _storage.loginFails.forEach((email, v) {
+      if (v is! Map) return;
+      byEmail[email] = LoginLockEntry(
+        email: email,
+        fails: (v['fails'] as num? ?? 0).toInt(),
+        firstFailAt: _parse(v['firstFailAt']),
+        lockedUntil: _parse(v['lockedUntil']),
+      );
+    });
+
+    try {
+      for (final e in await _accounts.listRemoteLoginLocks()) {
+        final prev = byEmail[e.email];
+        if (prev == null ||
+            (e.lockedUntil?.millisecondsSinceEpoch ?? 0) >
+                (prev.lockedUntil?.millisecondsSinceEpoch ?? 0) ||
+            e.fails > prev.fails) {
+          byEmail[e.email] = e;
+        }
+      }
+    } on Object {
+      // sem backend: vale só a lista local
+    }
+
+    final list = byEmail.values.toList()
+      ..sort((a, b) {
+        if (a.isLocked != b.isLocked) return a.isLocked ? -1 : 1;
+        return b.fails.compareTo(a.fails);
+      });
+    return list;
   }
 
   static DateTime? _parse(Object? v) =>

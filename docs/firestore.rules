@@ -66,9 +66,9 @@ service cloud.firestore {
     // saber que está travado; a escrita é limitada a estes 3 campos.
     match /login_locks/{emailHash} {
       allow get: if true;
-      allow list: if isMasterPrimary();
+      allow list: if isMaster();
       allow create, update: if request.resource.data.keys()
-        .hasOnly(['fails', 'firstFailAt', 'lockedUntil']);
+        .hasOnly(['email', 'fails', 'firstFailAt', 'lockedUntil']);
       allow delete: if isMaster();
     }
   }

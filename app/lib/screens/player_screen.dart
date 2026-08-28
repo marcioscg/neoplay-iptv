@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/models.dart';
 import '../services/cast_service.dart';
@@ -78,6 +79,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   void initState() {
     super.initState();
     _current = widget.item;
+    _setWakelock(true); // tela não apaga enquanto o player está aberto
     WidgetsBinding.instance.addObserver(this);
     PipService.instance.attach(
       onAction: _onPipAction,
@@ -95,6 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void dispose() {
+    _setWakelock(false);
     WidgetsBinding.instance.removeObserver(this);
     PipService.instance.detach();
     _progressTimer?.cancel();
@@ -255,9 +258,17 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
   }
 
+  /// Mantém a tela ligada. Silencioso se a plataforma não suportar.
+  void _setWakelock(bool on) {
+    WakelockPlus.toggle(enable: on).catchError((Object _) {});
+  }
+
   void _onVideo() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
+
+    // Tela ligada enquanto toca; libera quando pausa.
+    _setWakelock(c.value.isPlaying);
 
     // Fim do vídeo: passa para o próximo episódio sem sair do player.
     if (!_isLive && _hasSiblings && !_advancing) {

@@ -830,6 +830,9 @@ class AppState extends ChangeNotifier {
   /// Master: libera um e-mail bloqueado por tentativas erradas.
   Future<void> unlockLoginAttempts(String email) => _loginGuard.clear(email);
 
+  /// Master: lista de e-mails com tentativas erradas (para o painel).
+  Future<List<LoginLockEntry>> listLoginLocks() => _loginGuard.listLocks();
+
   // ---------- lembrete de mensalidade ----------
   static String _todayKey() {
     final d = DateTime.now();

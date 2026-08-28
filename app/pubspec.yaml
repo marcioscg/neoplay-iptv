@@ -19,6 +19,8 @@ dependencies:
   url_launcher: ^6.3.0
   # 1.0.8: senha do "manter conectado" guardada no Keystore em vez de texto puro.
   flutter_secure_storage: ^9.2.2
+  # 1.0.8: manter a tela ligada durante a reprodução.
+  wakelock_plus: ^1.2.8
   # Backend das contas e da central de uso. Sem trava de versão superior:
   # o pub resolve a versão mais nova compatível com o SDK do CI.
   firebase_core: '>=3.6.0'
