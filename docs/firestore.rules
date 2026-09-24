@@ -3,16 +3,21 @@ rules_version = '2';
 // Regras do Firestore do MIAU NET (projeto iptv-f90b5).
 // Cole isto em Firestore Database > Regras > Publicar.
 //
-// Modelo: o e-mail do master tem acesso amplo; cada conta comum só enxerga o
+// Modelo: o UID do master tem acesso amplo; cada conta comum só enxerga o
 // próprio perfil e só pode gravar o próprio "último acesso" (aparelho/data).
 // Qualquer conta autenticada registra eventos de uso e lê a tabela de preços.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Master = UID da conta marcioscg@hotmail.com no Firebase Auth (não é
+    // segredo). Pegue em Authentication > Users > "UID do usuário" e troque o
+    // valor abaixo ANTES de publicar. Com o valor de exemplo ninguém é master
+    // (falha fechada). Recriar a conta com o mesmo e-mail gera outro UID e
+    // não herda o acesso.
     function isMaster() {
       return request.auth != null
-        && request.auth.token.email == 'marcioscg@hotmail.com';
+        && request.auth.uid == 'COLE_AQUI_O_UID_DO_MASTER';
     }
 
     function touchingOnlyDevice() {
