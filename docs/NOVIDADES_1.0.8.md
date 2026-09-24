@@ -24,9 +24,8 @@ Versão: `1.0.8 (versionCode 11)`
 ## Regras do Firestore
 
 - O master é reconhecido pelo **UID** do Firebase Auth, não mais pelo e-mail.
-  Antes de publicar, troque `COLE_AQUI_O_UID_DO_MASTER` em
-  `docs/firestore.rules` pelo UID da conta master (Authentication → Users).
-  Sem isso ninguém tem acesso de master (o painel fica vazio).
+  O UID fica em `docs/firestore.rules`; se a conta master for recriada no
+  Auth, atualize-o lá (Authentication → Users) e publique as regras de novo.
 - `usage_events`: cada conta só registra eventos com o próprio `uid`.
 - `firebase.json` e `.firebaserc` na raiz: publique as regras com
   `firebase deploy --only firestore:rules`.

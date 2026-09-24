@@ -11,13 +11,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Master = UID da conta marcioscg@hotmail.com no Firebase Auth (não é
-    // segredo). Pegue em Authentication > Users > "UID do usuário" e troque o
-    // valor abaixo ANTES de publicar. Com o valor de exemplo ninguém é master
-    // (falha fechada). Recriar a conta com o mesmo e-mail gera outro UID e
-    // não herda o acesso.
+    // segredo). Recriar a conta com o mesmo e-mail gera outro UID e não herda
+    // o acesso: nesse caso, atualize o UID abaixo.
     function isMaster() {
       return request.auth != null
-        && request.auth.uid == 'COLE_AQUI_O_UID_DO_MASTER';
+        && request.auth.uid == 't5QBpkvNpgYLtCtJiSAagwkDHz02';
     }
 
     function touchingOnlyDevice() {
