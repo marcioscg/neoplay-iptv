@@ -239,14 +239,29 @@ class CastService {
       case CastStreamKind.mp4:
         return CastTarget(url, 'video/mp4');
       case CastStreamKind.matroska:
-        // WebM é um subconjunto de Matroska: o receptor aceita MKV com
-        // H.264/AAC anunciado assim; com 'video/x-matroska' ele recusa.
-        return CastTarget(url, 'video/webm');
+        // Sem transcodificação no app: MKV não é formato suportado pelo
+        // receptor padrão, e rotulá-lo como outro container não o converte.
+        throw const CastException(_mkvMessage);
       case CastStreamKind.unknown:
+        // Não deu para ler o stream: decide pela extensão, recusando o que o
+        // receptor padrão não suporta (MKV/AVI e TS progressivo).
+        final clean = url.split('?').first.toLowerCase();
+        if (isRiskyFormat(url)) throw const CastException(_mkvMessage);
+        if (clean.endsWith('.ts')) {
+          throw const CastException(
+            'Este conteúdo está em MPEG-TS, formato que o Chromecast não '
+            'reproduz. Assista no celular.',
+          );
+        }
         final type = contentTypeFor(url);
         return CastTarget(url, type, hls: type == 'application/x-mpegurl');
     }
   }
+
+  static const _mkvMessage =
+      'Este vídeo está em MKV/AVI, formato que o Chromecast não reproduz '
+      '(o app não converte vídeo). Assista no celular ou escolha uma versão '
+      'em MP4 ou m3u8.';
 
   /// Lê só os primeiros bytes (com o User-Agent do Chromecast, porque é ele
   /// quem vai buscar o vídeo).
@@ -355,7 +370,6 @@ class CastService {
     }
     if (clean.endsWith('.mpd')) return 'application/dash+xml';
     if (clean.endsWith('.webm')) return 'video/webm';
-    if (clean.endsWith('.mkv')) return 'video/webm'; // ver resolveTarget
     if (clean.endsWith('.ts')) return 'video/mp2t';
     return 'video/mp4';
   }

@@ -36,13 +36,16 @@ Chromecast) e decide o que mandar:
 - **Ao vivo** em MPEG-TS (`/usuario/senha/123` ou `.ts`): tenta a variante HLS
   do painel (`/live/usuario/senha/123.m3u8`). Se só houver TS, avisa que o
   Chromecast não reproduz esse formato, sem conectar à toa.
-- **Filmes/episódios**: tipo real pelo conteúdo (MP4, MKV, HLS). MKV vai como
-  `video/webm`, o que o receptor aceita quando o vídeo é H.264/AAC.
+- **Filmes/episódios**: tipo real pelo conteúdo (MP4, HLS). MKV/AVI e TS
+  progressivo são recusados com aviso: o app **não converte** vídeo e o
+  receptor padrão não suporta esses containers.
 - Erros 401/403/404 do provedor aparecem antes de conectar.
 - Depois do `loadMedia`, espera o status da TV: se o receptor der erro
   (ex.: HLS sem CORS/HTTPS no servidor), mostra a causa e encerra a sessão.
 - Limite real: o receptor padrão do Google não toca HLS de servidores sem
   CORS. Resolver isso exige um receptor próprio (Cast Console) ou proxy.
+- **Não testado em Chromecast real.** A troca TS → `.m3u8` depende de o
+  painel do provedor servir HLS nesse caminho; só um aparelho confirma.
 
 ## Notificações push (FCM)
 - App: pede permissão, grava `push_profiles/{uid}` com token, sugestões reais

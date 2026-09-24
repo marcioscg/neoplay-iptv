@@ -32,7 +32,9 @@ async function accountActive(uid) {
   if (!snap.exists) return true; // master não tem doc em users
   const u = snap.data();
   if (u.deleted === true || u.status === 'blocked') return false;
-  if (u.expiresAt && new Date(u.expiresAt) < new Date()) return false;
+  // Mesma regra do app (AdminUser.isExpired): vitalício nunca vence.
+  if (u.plan !== 'vitalicio' && u.expiresAt &&
+      new Date(u.expiresAt) < new Date()) return false;
   return true;
 }
 
