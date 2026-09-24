@@ -39,11 +39,10 @@ class AppColors {
   static Color get surface3 =>
       _d ? const Color(0xFF232733) : const Color(0xFFE1E4EA);
   static Color get accent =>
-      _d ? const Color(0xFFFFC93C) : const Color(0xFFB97800);
+      _d ? const Color(0xFF9061DD) : const Color(0xFF662D91);
   static Color get accent2 =>
-      _d ? const Color(0xFFFF9A2E) : const Color(0xFFE0730E);
-  static Color get ok =>
-      _d ? const Color(0xFF3DDC97) : const Color(0xFF12885A);
+      _d ? const Color(0xFFB690F2) : const Color(0xFF8446BD);
+  static Color get ok => _d ? const Color(0xFF3DDC97) : const Color(0xFF12885A);
   static Color get bad =>
       _d ? const Color(0xFFFF5D5D) : const Color(0xFFD23838);
   static Color get text =>
@@ -55,7 +54,7 @@ class AppColors {
 
   /// Gradientes usados nos logos/capas quando não há imagem.
   static const artGradients = <List<Color>>[
-    [Color(0xFFF0A32B), Color(0xFFA8451F)],
+    [Color(0xFF9061DD), Color(0xFF3A1766)],
     [Color(0xFF5B8CFF), Color(0xFF2B1F6B)],
     [Color(0xFF3DDC97), Color(0xFF0F5C4A)],
     [Color(0xFFFF5D8F), Color(0xFF5C1533)],
@@ -68,9 +67,11 @@ class AppColors {
 }
 
 ThemeData buildTheme({bool dark = true}) {
-  final base = dark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true);
-  final accent = dark ? const Color(0xFFFFC93C) : const Color(0xFFB97800);
-  final accent2 = dark ? const Color(0xFFFF9A2E) : const Color(0xFFE0730E);
+  final base = dark
+      ? ThemeData.dark(useMaterial3: true)
+      : ThemeData.light(useMaterial3: true);
+  final accent = dark ? const Color(0xFF9061DD) : const Color(0xFF662D91);
+  final accent2 = dark ? const Color(0xFFB690F2) : const Color(0xFF8446BD);
   final bg = dark ? const Color(0xFF07080B) : const Color(0xFFF4F5F7);
   final card = dark ? const Color(0xFF101218) : const Color(0xFFFFFFFF);
   final surface1 = dark ? const Color(0xFF14161E) : const Color(0xFFFFFFFF);
@@ -88,7 +89,7 @@ ThemeData buildTheme({bool dark = true}) {
       primary: accent,
       secondary: accent2,
       surface: card,
-      onPrimary: dark ? const Color(0xFF171207) : const Color(0xFFFFFFFF),
+      onPrimary: Colors.white,
       onSurface: textColor,
       error: bad,
     ),
@@ -102,7 +103,8 @@ ThemeData buildTheme({bool dark = true}) {
         fontSize: 18,
         fontWeight: FontWeight.w600,
       ),
-      iconTheme: IconThemeData(color: dark ? const Color(0xFFDFE3EC) : const Color(0xFF2A2E38)),
+      iconTheme: IconThemeData(
+          color: dark ? const Color(0xFFDFE3EC) : const Color(0xFF2A2E38)),
     ),
     dividerColor: line,
     dividerTheme: DividerThemeData(color: line, thickness: 1, space: 1),
@@ -137,7 +139,7 @@ ThemeData buildTheme({bool dark = true}) {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: accent,
-        foregroundColor: dark ? const Color(0xFF171207) : Colors.white,
+        foregroundColor: Colors.white,
         minimumSize: const Size.fromHeight(50),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

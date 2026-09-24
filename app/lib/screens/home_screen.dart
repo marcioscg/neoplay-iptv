@@ -49,7 +49,7 @@ class HomeScreen extends StatelessWidget {
           ],
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'Canais'),
+              Tab(text: 'TV'),
               Tab(text: 'Filmes'),
               Tab(text: 'Séries'),
               Tab(text: 'Favoritos'),
@@ -164,7 +164,7 @@ class _GenreChips extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SectionLabel('Filtrar por gênero'),
+        const SectionLabel('Gêneros'),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -191,6 +191,215 @@ class _GenreChips extends StatelessWidget {
   }
 }
 
+/// Estrutura comum das abas de conteúdo: busca, atalhos (favoritos, recentes,
+/// continuar), gêneros, "todos" e categorias — nessa ordem de prioridade.
+class _ContentHub extends StatelessWidget {
+  const _ContentHub({
+    required this.state,
+    required this.source,
+    required this.categories,
+    required this.allTitle,
+    required this.rails,
+    required this.grid,
+  });
+
+  final AppState state;
+  final List<MediaItem> source;
+  final List<MediaCategory> categories;
+  final String allTitle;
+  final List<Widget> rails;
+  final bool grid;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        const _SearchPill(),
+        ...rails,
+        _GenreChips(source: source, grid: grid),
+        const SectionLabel('Navegar'),
+        CategoryTile(
+          title: allTitle,
+          count: source.length,
+          icon: Icons.grid_view_rounded,
+          highlight: true,
+          onTap: () => _open(context, allTitle, source, grid: grid),
+        ),
+        if (categories.isNotEmpty) const SectionLabel('Categorias'),
+        ...categories.map(
+          (c) => CategoryTile(
+            title: c.name,
+            count: c.count,
+            locked: state.isGroupLocked(c.name),
+            onTap: () => _openCategory(
+              context,
+              state,
+              c.name,
+              state.inCategory(source, c.name),
+              grid: grid,
+            ),
+          ),
+        ),
+        if (state.updatedAt != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'Lista atualizada em ${_stamp(state.updatedAt!)}',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: AppColors.muted),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Atalho de busca no topo de cada aba.
+class _SearchPill extends StatelessWidget {
+  const _SearchPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: Material(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const SearchScreen()),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Icon(Icons.search, size: 20, color: AppColors.muted),
+                const SizedBox(width: 10),
+                Text(
+                  'Buscar canais, filmes e séries',
+                  style: TextStyle(fontSize: 13.5, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Fileira horizontal de atalhos (favoritos, recentes, continuar assistindo).
+/// Some quando não há itens.
+class _Rail extends StatelessWidget {
+  const _Rail({
+    required this.title,
+    required this.icon,
+    required this.items,
+    this.poster = true,
+    this.showProgress = false,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<MediaItem> items;
+  final bool poster;
+  final bool showProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final state = context.watch<AppState>();
+    final w = poster ? 104.0 : 92.0;
+    final h = poster ? 150.0 : 92.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 4, 6),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+              TextButton(
+                onPressed: () => _open(context, title, items, grid: poster),
+                child: Text('Ver tudo (${items.length})'),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: h + 40,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: items.length > 20 ? 20 : items.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, i) {
+              final item = items[i];
+              final pct =
+                  showProgress ? state.getProgress(item.id)?.percent : null;
+              return SizedBox(
+                width: w,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => openPlayer(context, item, playlist: items),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Stack(
+                        children: [
+                          ArtThumb(
+                            name: item.name,
+                            logo: item.logo,
+                            width: w,
+                            height: h,
+                            radius: 10,
+                          ),
+                          if (pct != null)
+                            Positioned(
+                              left: 6,
+                              right: 6,
+                              bottom: 6,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(2),
+                                child: LinearProgressIndicator(
+                                  value: pct,
+                                  minHeight: 3,
+                                  backgroundColor: Colors.black45,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        item.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, height: 1.2),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ChannelsTab extends StatelessWidget {
   const _ChannelsTab({required this.state});
   final AppState state;
@@ -200,50 +409,25 @@ class _ChannelsTab extends StatelessWidget {
     if (state.live.isEmpty) {
       return _emptyOrError(context, state, 'Nenhum canal na lista ativa');
     }
-    final cats = state.liveCategories;
-
-    return ListView(
-      children: [
-        CategoryTile(
-          title: 'Todos os canais',
-          count: state.live.length,
-          icon: Icons.grid_view_rounded,
-          onTap: () => _open(context, 'Todos os canais', state.live),
-        ),
-        CategoryTile(
-          title: 'Assistido recentemente',
-          count: state.recentItems.length,
-          icon: Icons.history,
-          onTap: () =>
-              _open(context, 'Assistido recentemente', state.recentItems),
-        ),
-        CategoryTile(
+    return _ContentHub(
+      state: state,
+      source: state.live,
+      categories: state.liveCategories,
+      allTitle: 'Todos os canais',
+      grid: false,
+      rails: [
+        _Rail(
           title: 'Favoritos',
-          count: state.favoriteItems.length,
-          icon: Icons.favorite_border,
-          highlight: true,
-          onTap: () => _open(context, 'Favoritos', state.favoriteItems),
+          icon: Icons.favorite,
+          items: state.favoritesOf(MediaKind.live),
+          poster: false,
         ),
-        _GenreChips(source: state.live, grid: false),
-        const SectionLabel('Categorias'),
-        ...cats.map(
-          (c) => CategoryTile(
-            title: c.name,
-            count: c.count,
-            locked: state.isGroupLocked(c.name),
-            onTap: () => _openCategory(
-                context, state, c.name, state.inCategory(state.live, c.name)),
-          ),
+        _Rail(
+          title: 'Assistidos recentemente',
+          icon: Icons.history,
+          items: state.recentOf(MediaKind.live),
+          poster: false,
         ),
-        if (state.updatedAt != null)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'Lista atualizada em ${_stamp(state.updatedAt!)}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF5B6274)),
-            ),
-          ),
       ],
     );
   }
@@ -263,32 +447,23 @@ class _MoviesTab extends StatelessWidget {
             'Esta lista não expõe conteúdo sob demanda ou ainda não foi importada.',
       );
     }
-    final cats = state.movieCategories;
-
-    return ListView(
-      children: [
-        CategoryTile(
-          title: 'Todos os filmes',
-          count: state.movies.length,
-          icon: Icons.grid_view_rounded,
-          onTap: () =>
-              _open(context, 'Todos os filmes', state.movies, grid: true),
+    return _ContentHub(
+      state: state,
+      source: state.movies,
+      categories: state.movieCategories,
+      allTitle: 'Todos os filmes',
+      grid: true,
+      rails: [
+        _Rail(
+          title: 'Favoritos',
+          icon: Icons.favorite,
+          items: state.favoritesOf(MediaKind.movie),
         ),
-        _GenreChips(source: state.movies, grid: true),
-        const SectionLabel('Categorias'),
-        ...cats.map(
-          (c) => CategoryTile(
-            title: c.name,
-            count: c.count,
-            locked: state.isGroupLocked(c.name),
-            onTap: () => _openCategory(
-              context,
-              state,
-              c.name,
-              state.inCategory(state.movies, c.name),
-              grid: true,
-            ),
-          ),
+        _Rail(
+          title: 'Assistidos recentemente',
+          icon: Icons.history,
+          items: state.recentOf(MediaKind.movie),
+          showProgress: true,
         ),
       ],
     );
@@ -310,32 +485,24 @@ class _SeriesTab extends StatelessWidget {
             'e episódios aparecem aqui automaticamente.',
       );
     }
-    final cats = state.seriesCategories;
-
-    return ListView(
-      children: [
-        CategoryTile(
-          title: 'Todas as séries',
-          count: state.series.length,
-          icon: Icons.grid_view_rounded,
-          onTap: () =>
-              _open(context, 'Todas as séries', state.series, grid: true),
+    // Temporadas e episódios abrem ao tocar numa série (SeriesDetailScreen).
+    return _ContentHub(
+      state: state,
+      source: state.series,
+      categories: state.seriesCategories,
+      allTitle: 'Todas as séries',
+      grid: true,
+      rails: [
+        _Rail(
+          title: 'Continuar assistindo',
+          icon: Icons.play_circle_outline,
+          items: state.continueSeries,
+          showProgress: true,
         ),
-        _GenreChips(source: state.series, grid: true),
-        const SectionLabel('Categorias'),
-        ...cats.map(
-          (c) => CategoryTile(
-            title: c.name,
-            count: c.count,
-            locked: state.isGroupLocked(c.name),
-            onTap: () => _openCategory(
-              context,
-              state,
-              c.name,
-              state.inCategory(state.series, c.name),
-              grid: true,
-            ),
-          ),
+        _Rail(
+          title: 'Favoritos',
+          icon: Icons.favorite,
+          items: state.favoritesOf(MediaKind.series),
         ),
       ],
     );

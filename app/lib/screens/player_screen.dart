@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/models.dart';
 import '../services/cast_service.dart';
@@ -74,6 +75,20 @@ class _PlayerScreenState extends State<PlayerScreen>
   Timer? _progressTimer;
   Timer? _hintTimer;
 
+  // Toques no vídeo: 1 toque mostra/esconde controles; cada par de toques
+  // rápidos no mesmo lado soma ±10s (2 = 10s, 4 = 20s, 6 = 30s...).
+  static const _tapWindow = Duration(milliseconds: 320);
+  int _tapCount = 0;
+  bool _tapLeft = false;
+  DateTime? _lastTapAt;
+  Timer? _tapTimer;
+  int _seekAccum = 0; // segundos somados na sequência atual (para o aviso)
+  Duration? _seekTarget; // alvo acumulado, pois position atrasa após seekTo
+
+  // Tela ligada só enquanto o vídeo toca (FLAG_KEEP_SCREEN_ON / idleTimer):
+  // não impede o bloqueio manual pelo botão de energia.
+  bool _wakeOn = false;
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +115,8 @@ class _PlayerScreenState extends State<PlayerScreen>
     _progressTimer?.cancel();
     _hintTimer?.cancel();
     _controlsTimer?.cancel();
+    _tapTimer?.cancel();
+    _setWake(false);
     _persistProgress();
     _controller?.removeListener(_onVideo);
     _controller?.dispose();
@@ -258,13 +275,15 @@ class _PlayerScreenState extends State<PlayerScreen>
   void _onVideo() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
+    _setWake(c.value.isPlaying);
 
     // Fim do vídeo: passa para o próximo episódio sem sair do player.
     if (!_isLive && _hasSiblings && !_advancing) {
       final dur = c.value.duration;
       final pos = c.value.position;
       final ended = c.value.isCompleted ||
-          (dur > Duration.zero && pos >= dur - const Duration(milliseconds: 900));
+          (dur > Duration.zero &&
+              pos >= dur - const Duration(milliseconds: 900));
       if (ended) {
         _advancing = true;
         _zap(1);
@@ -322,8 +341,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (label == _qualityLabel) return;
     final url = label == _autoQuality
         ? _sourceUrl
-        : _qualities.firstWhere((q) => q.label == label,
-            orElse: () => HlsVariant(label: label, url: _sourceUrl ?? '')).url;
+        : _qualities
+            .firstWhere((q) => q.label == label,
+                orElse: () => HlsVariant(label: label, url: _sourceUrl ?? ''))
+            .url;
     if (url == null || url.isEmpty) return;
     setState(() => _qualityLabel = label);
     await _open(_current, overrideUrl: url);
@@ -375,28 +396,107 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (_showControls) _bumpControls();
   }
 
+  void _setWake(bool on) {
+    if (on == _wakeOn) return;
+    _wakeOn = on;
+    // Falha do plugin não pode derrubar o player.
+    (on ? WakelockPlus.enable() : WakelockPlus.disable())
+        .catchError((Object _) {});
+  }
+
   void _seekBy(int seconds) {
     final c = _controller;
     if (c == null || _isLive) return;
-    var next = c.value.position + Duration(seconds: seconds);
+    // Mudou de direção: começa uma soma nova.
+    if (_seekAccum != 0 && (_seekAccum < 0) != (seconds < 0)) {
+      _seekAccum = 0;
+      _seekTarget = null;
+    }
+    var next = (_seekTarget ?? c.value.position) + Duration(seconds: seconds);
     if (next < Duration.zero) next = Duration.zero;
     final total = c.value.duration;
     if (total > Duration.zero && next > total) next = total;
+    _seekTarget = next;
+    _seekAccum += seconds;
     c.seekTo(next);
     setState(() {
-      _seekHint = seconds < 0 ? '-10s' : '+10s';
-      _seekHintLeft = seconds < 0;
+      _seekHint = _seekAccum > 0 ? '+$_seekAccum' : '$_seekAccum';
+      _seekHintLeft = _seekAccum < 0;
     });
     _hintTimer?.cancel();
-    _hintTimer = Timer(const Duration(milliseconds: 700), () {
+    _hintTimer = Timer(const Duration(milliseconds: 900), () {
+      _seekAccum = 0;
+      _seekTarget = null;
       if (mounted) setState(() => _seekHint = null);
     });
   }
 
-  void _onDoubleTap(TapDownDetails details, Size size) {
-    if (_isLive) return;
-    final left = details.localPosition.dx < size.width / 2;
-    _seekBy(left ? -10 : 10);
+  /// Toque na área do vídeo. Botões do overlay têm prioridade (vencem a
+  /// disputa de gestos), então isto só recebe toques em área livre.
+  void _onSurfaceTap(bool left) {
+    if (_isLive || _controller == null || _loading || _error != null) {
+      _toggleControls();
+      return;
+    }
+    final now = DateTime.now();
+    final chained = _lastTapAt != null &&
+        now.difference(_lastTapAt!) < _tapWindow &&
+        left == _tapLeft;
+    _lastTapAt = now;
+    _tapTimer?.cancel();
+    _tapCount = chained ? _tapCount + 1 : 1;
+    _tapLeft = left;
+    if (_tapCount.isEven) _seekBy(left ? -10 : 10);
+    _tapTimer = Timer(_tapWindow, () {
+      // Toque isolado (e fora de uma sequência de avanço): controles.
+      if (_tapCount == 1 && _seekHint == null && mounted) _toggleControls();
+      _tapCount = 0;
+    });
+  }
+
+  /// Envolve vídeo + overlay com o reconhecedor de toques simples/múltiplos.
+  Widget _tapSurface(Widget child) => LayoutBuilder(
+        builder: (context, box) => GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (d) => _onSurfaceTap(d.localPosition.dx < box.maxWidth / 2),
+          child: child,
+        ),
+      );
+
+  Widget _seekHintLayer() {
+    if (_seekHint == null) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: Align(
+        alignment: _seekHintLeft ? Alignment.centerLeft : Alignment.centerRight,
+        child: FractionallySizedBox(
+          widthFactor: 0.5,
+          heightFactor: 1,
+          child: Container(
+            color: Colors.black26,
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _seekHintLeft ? Icons.fast_rewind : Icons.fast_forward,
+                  color: Colors.white,
+                  size: 34,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _seekHint!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _setSpeed(double speed) async {
@@ -435,13 +535,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (_fullscreen) {
       return Scaffold(
         backgroundColor: Colors.black,
-        body: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleControls,
-          child: Stack(
+        body: _tapSurface(
+          Stack(
             children: [
               Positioned.fill(child: _video()),
               Positioned.fill(child: _overlay(state, fullscreen: true)),
+              Positioned.fill(child: _seekHintLayer()),
             ],
           ),
         ),
@@ -497,15 +596,14 @@ class _PlayerScreenState extends State<PlayerScreen>
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _toggleControls,
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: _tapSurface(
+              Stack(
                 children: [
                   Positioned.fill(child: _video()),
                   Positioned.fill(child: _overlay(state, fullscreen: false)),
+                  Positioned.fill(child: _seekHintLayer()),
                 ],
               ),
             ),
@@ -553,56 +651,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       );
     }
     final c = _controller!;
-    return ColoredBox(
-      color: Colors.black,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final size = Size(constraints.maxWidth, constraints.maxHeight);
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onDoubleTapDown: (d) => _onDoubleTap(d, size),
-            onTap: _toggleControls,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _aspectVideo(c),
-                if (_seekHint != null)
-                  Align(
-                    alignment:
-                        _seekHintLeft ? Alignment.centerLeft : Alignment.centerRight,
-                    child: FractionallySizedBox(
-                      widthFactor: 0.5,
-                      child: Container(
-                        color: Colors.black26,
-                        alignment: Alignment.center,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _seekHintLeft ? Icons.fast_rewind : Icons.fast_forward,
-                              color: Colors.white,
-                              size: 34,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _seekHint!,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
+    return ColoredBox(color: Colors.black, child: _aspectVideo(c));
   }
 
   Widget _aspectVideo(VideoPlayerController c) {
@@ -683,10 +732,8 @@ class _PlayerScreenState extends State<PlayerScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (_hasSiblings)
-                    _round(Icons.skip_previous, () => _zap(-1)),
-                  if (!_isLive)
-                    _round(Icons.replay_10, () => _seekBy(-10)),
+                  if (_hasSiblings) _round(Icons.skip_previous, () => _zap(-1)),
+                  if (!_isLive) _round(Icons.replay_10, () => _seekBy(-10)),
                   const SizedBox(width: 6),
                   _round(
                     (c?.value.isPlaying ?? false)
@@ -745,8 +792,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                       _menuSpeed(dark: true),
                       if (_qualities.isNotEmpty) _menuQuality(dark: true),
                       TextButton(
-                        onPressed: () =>
-                            setState(() => _aspect = _aspect.next),
+                        onPressed: () => setState(() => _aspect = _aspect.next),
                         child: Text(_aspect.label,
                             style: const TextStyle(color: Colors.white)),
                       ),
@@ -978,7 +1024,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         icon: Icons.movie_outlined,
         title: 'Reprodução sob demanda',
         message:
-            'Toque duas vezes à esquerda/direita para ±10s. Ajuste velocidade, qualidade e aspecto abaixo do vídeo.',
+            'Toque 2x à esquerda/direita para ±10s (4 toques = 20s, 6 = 30s). Ajuste velocidade, qualidade e aspecto abaixo do vídeo.',
       );
     }
     if (_epg.isEmpty) {

@@ -74,6 +74,20 @@ class SettingsScreen extends StatelessWidget {
             icon: Icons.delete_outline,
             onTap: () => _confirmClearFavorites(context, state),
           ),
+          if (state.pushAvailable) ...[
+            const SectionLabel('Notificações'),
+            SwitchListTile(
+              tileColor: AppColors.surface1,
+              title: const Text('Sugestões e lembretes',
+                  style: TextStyle(fontSize: 14)),
+              subtitle: Text(
+                'Uma sugestão à tarde e, às 22h, a série que você parou',
+                style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+              ),
+              value: state.pushEnabled,
+              onChanged: state.setPushEnabled,
+            ),
+          ],
           const SectionLabel('Controle parental'),
           SwitchListTile(
             tileColor: AppColors.surface1,
@@ -141,7 +155,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  'MIAU NET · versão 1.0.8',
+                  'MIAU NET · versão 1.0.9',
                   style: TextStyle(fontSize: 11.5, color: Color(0xFF5B6274)),
                 ),
                 SizedBox(height: 6),
@@ -329,9 +343,8 @@ class _PlanCard extends StatelessWidget {
         color: AppColors.surface1,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: expired
-              ? AppColors.bad.withValues(alpha: 0.5)
-              : AppColors.line,
+          color:
+              expired ? AppColors.bad.withValues(alpha: 0.5) : AppColors.line,
         ),
       ),
       child: Column(

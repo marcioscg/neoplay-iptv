@@ -49,8 +49,9 @@ class FirebaseAccountsRepository implements AccountsRepository {
         .snapshots()
         .listen(
       (snap) {
-        _users = [for (final d in snap.docs) _fromDoc(d.id, d.data())]
-          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _users = [
+          for (final d in snap.docs) _fromDoc(d.id, d.data())
+        ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         _onChanged?.call();
       },
       onError: (Object _) {}, // conta comum não lê a coleção inteira: ok
@@ -112,7 +113,7 @@ class FirebaseAccountsRepository implements AccountsRepository {
           e.code == 'invalid-credential' ||
           e.code == 'wrong-password' ||
           e.code == 'invalid-email') {
-        return 'E-mail ou senha inválidos.';
+        return kInvalidCredentials;
       }
       return 'Não foi possível entrar no Firebase: ${e.message ?? e.code}';
     } on FirebaseException catch (e) {
@@ -122,6 +123,16 @@ class FirebaseAccountsRepository implements AccountsRepository {
 
   @override
   bool get isCloud => true;
+
+  @override
+  Future<void> savePushProfile(Map<String, dynamic> profile) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    await _db
+        .collection('push_profiles')
+        .doc(uid)
+        .set(profile, SetOptions(merge: true));
+  }
 
   @override
   Future<void> signOut() async {
@@ -257,8 +268,8 @@ class FirebaseAccountsRepository implements AccountsRepository {
         m3uUrl: (d['m3uUrl'] ?? '') as String,
         plan: UserPlan.fromString((d['plan'] ?? 'mensal') as String),
         status: UserStatus.fromString((d['status'] ?? 'active') as String),
-        createdAt:
-            DateTime.tryParse((d['createdAt'] ?? '') as String) ?? DateTime.now(),
+        createdAt: DateTime.tryParse((d['createdAt'] ?? '') as String) ??
+            DateTime.now(),
         expiresAt: d['expiresAt'] != null
             ? DateTime.tryParse(d['expiresAt'] as String)
             : null,

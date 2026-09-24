@@ -11,6 +11,9 @@ import 'storage.dart';
 /// o primeiro acesso master define a senha do aparelho (guardada como hash).
 const kMasterEmail = 'marcioscg@hotmail.com';
 
+/// Mensagem de credencial errada (conta para o bloqueio por tentativas).
+const kInvalidCredentials = 'E-mail ou senha inválidos.';
+
 bool isMasterEmail(String email) => email.trim().toLowerCase() == kMasterEmail;
 
 String hashPassword(String password) =>
@@ -66,6 +69,11 @@ abstract class AccountsRepository {
   Future<void> recordEvent(UsageEvent event);
   Future<void> clearEvents();
 
+  /// Grava o perfil de notificações da conta logada (token FCM, sugestões e
+  /// última série), lido pela Cloud Function que dispara os pushes.
+  /// No modo local não faz nada: sem backend não há push agendado.
+  Future<void> savePushProfile(Map<String, dynamic> profile);
+
   /// Tabela de preços dos planos, compartilhada entre os aparelhos do master.
   Pricing get pricing;
   Future<void> savePricing(Pricing pricing);
@@ -103,11 +111,14 @@ class LocalAccountsRepository implements AccountsRepository {
       await _storage.saveMasterPasswordHash(hash);
       return null;
     }
-    return stored == hash ? null : 'E-mail ou senha inválidos.';
+    return stored == hash ? null : kInvalidCredentials;
   }
 
   @override
   bool get isCloud => false;
+
+  @override
+  Future<void> savePushProfile(Map<String, dynamic> profile) async {}
 
   @override
   Future<void> signOut() async {}

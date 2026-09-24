@@ -44,6 +44,14 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    // Perfil de notificações (token FCM + sugestões). Cada conta só mexe no
+    // próprio; a Cloud Function usa o Admin SDK (não passa pelas regras).
+    match /push_profiles/{uid} {
+      allow read, delete: if isMaster()
+        || (request.auth != null && request.auth.uid == uid);
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+    }
+
     // Configuração compartilhada (tabela de preços dos planos).
     match /config/{doc} {
       allow read: if request.auth != null;

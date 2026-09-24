@@ -202,8 +202,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 4),
                         Text(
                           _error!,
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.bad),
+                          style: TextStyle(fontSize: 12, color: AppColors.bad),
                         ),
                       ],
                       const SizedBox(height: 14),
@@ -214,7 +213,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Color(0xFF171207)),
+                                    strokeWidth: 2, color: Colors.white),
                               )
                             : const Text('Entrar'),
                       ),

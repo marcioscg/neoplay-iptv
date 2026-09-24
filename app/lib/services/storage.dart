@@ -29,6 +29,10 @@ class Storage {
   static const _kThemeChoice = 'theme_choice';
   static const _kPricing = 'plan_pricing';
   static const _kMasterHash = 'master_hash';
+  static const _kLoginFails = 'login_fails';
+  static const _kLoginLockUntil = 'login_lock_until';
+  static const _kPushEnabled = 'push_enabled';
+  static const _kPushProfileSig = 'push_profile_sig';
 
   // Chaves da versão 1.0.0, removidas na migração.
   static const _kLegacyLive = 'cache_live';
@@ -135,6 +139,35 @@ class Storage {
 
   Future<void> saveMasterPasswordHash(String hash) =>
       _p.setString(_kMasterHash, hash);
+
+  // ---------- tentativas de login ----------
+  int get loginFails => _p.getInt(_kLoginFails) ?? 0;
+
+  DateTime? get loginLockedUntil {
+    final ms = _p.getInt(_kLoginLockUntil);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> saveLoginFails(int fails, {DateTime? lockedUntil}) async {
+    await _p.setInt(_kLoginFails, fails);
+    if (lockedUntil == null) {
+      await _p.remove(_kLoginLockUntil);
+    } else {
+      await _p.setInt(_kLoginLockUntil, lockedUntil.millisecondsSinceEpoch);
+    }
+  }
+
+  // ---------- notificações ----------
+  bool get pushEnabled => _p.getBool(_kPushEnabled) ?? true;
+
+  Future<void> savePushEnabled(bool enabled) =>
+      _p.setBool(_kPushEnabled, enabled);
+
+  /// Assinatura do último perfil de notificação enviado (evita regravar igual).
+  String? get pushProfileSig => _p.getString(_kPushProfileSig);
+
+  Future<void> savePushProfileSig(String sig) =>
+      _p.setString(_kPushProfileSig, sig);
 
   bool get parentalEnabled => _p.getBool(_kParentalEnabled) ?? false;
 

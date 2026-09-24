@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'screens/admin/admin_panel_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/items_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/setup_screen.dart';
 import 'services/accounts_repository.dart';
@@ -164,9 +165,23 @@ class _AppEntryState extends State<_AppEntry> {
     });
   }
 
+  /// Notificação tocada: abre o título assim que ele existir no catálogo.
+  void _consumePushOpen(AppState state) {
+    final id = state.pendingOpenId;
+    if (id == null) return;
+    final item = state.resolvePushItem(id);
+    // Catálogo ainda carregando: tenta de novo no próximo build.
+    if (item == null) return;
+    state.pendingOpenId = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) openPlayer(context, item);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    if (state.hasPlaylist) _consumePushOpen(state);
 
     // Master usando como app, ainda sem lista própria: mostra o cadastro.
     if (state.isMaster && !state.hasPlaylist) return const SetupScreen();

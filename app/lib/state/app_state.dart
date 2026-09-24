@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import '../services/device_label.dart';
 import '../services/genres.dart';
 import '../services/importer.dart';
 import '../services/parental.dart';
+import '../services/push_service.dart';
 import '../services/storage.dart';
 import '../services/xtream_api.dart';
 import '../theme.dart';
@@ -25,8 +27,9 @@ class SessionUser {
   final AdminUser? account;
   const SessionUser({required this.email, this.isMaster = false, this.account});
 
-  String get displayName =>
-      account?.name.isNotEmpty == true ? account!.name : (isMaster ? 'Master' : email);
+  String get displayName => account?.name.isNotEmpty == true
+      ? account!.name
+      : (isMaster ? 'Master' : email);
 }
 
 /// Estado global do app: lista ativa, conteúdo importado, favoritos e busca.
@@ -116,7 +119,7 @@ class AppState extends ChangeNotifier {
     _recentIds = _storage.recent.toList();
     updatedAt = _storage.cachedAt;
     _playbackProgress =
-      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+        Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
 
     final cached = await _storage.loadCachedContent();
@@ -131,6 +134,126 @@ class AppState extends ChangeNotifier {
     _pendingAccount = null;
     if (pending != null) {
       unawaited(_applyAccountPlaylist(pending));
+    }
+    if (isLogged) unawaited(_startPush());
+  }
+
+  // ---------- notificações push ----------
+  /// Conteúdo a abrir por causa de uma notificação tocada (consumido pela UI).
+  String? pendingOpenId;
+
+  bool get pushEnabled => _storage.pushEnabled;
+  bool get pushAvailable => _accounts.isCloud;
+
+  Future<void> setPushEnabled(bool enabled) async {
+    await _storage.savePushEnabled(enabled);
+    notifyListeners();
+    await _syncPush();
+  }
+
+  Future<void> _startPush() async {
+    if (!_accounts.isCloud) return;
+    final push = PushService.instance;
+    push.onToken = () => unawaited(_syncPush());
+    push.onOpen = (data) {
+      final id = data['mediaId'];
+      if (id is String && id.isNotEmpty) {
+        pendingOpenId = id;
+        notifyListeners();
+      }
+    };
+    await push.start();
+    await _syncPush();
+  }
+
+  /// Item para abrir a partir do push: catálogo atual ou progresso salvo.
+  MediaItem? resolvePushItem(String id) =>
+      _byId[id] ?? _playbackProgress[id]?.toMediaItem();
+
+  bool _isAdultItem(MediaItem e) =>
+      Parental.isAdult(e.group) ||
+      Parental.isAdult(e.name) ||
+      Genres.of(e.group, e.name).any(Genres.isAdultGenre);
+
+  /// Sugestões do dia: outros títulos do mesmo gênero (ou categoria) do último
+  /// filme/série assistido. Nunca inclui adulto nem o que já foi visto.
+  @visibleForTesting
+  List<MediaItem> pushSuggestions({int max = 14}) {
+    MediaItem? ref;
+    for (final e in recentItems) {
+      if (e.kind == MediaKind.live || _isAdultItem(e)) continue;
+      if (e.kind == MediaKind.series && e.url.isNotEmpty) {
+        // Episódio: a referência é a série (container), achada pelo nome.
+        final show = series.where((s) => s.name == e.group).firstOrNull;
+        if (show == null || _isAdultItem(show)) continue;
+        ref = show;
+      } else {
+        ref = e;
+      }
+      break;
+    }
+    if (ref == null) return const [];
+
+    final pool = ref.kind == MediaKind.series ? series : movies;
+    final byGenre = ref.kind == MediaKind.series ? _genreSeries : _genreMovies;
+    final seen = {..._recentIds, ref.id};
+    final out = <String, MediaItem>{};
+    for (final g in Genres.of(ref.group, ref.name)) {
+      if (Genres.isAdultGenre(g)) continue;
+      for (final e in byGenre[g] ?? const <MediaItem>[]) {
+        if (!seen.contains(e.id) && !_isAdultItem(e)) out[e.id] = e;
+      }
+    }
+    if (out.isEmpty) {
+      for (final e in inCategory(pool, ref.group)) {
+        if (!seen.contains(e.id) && !_isAdultItem(e)) out[e.id] = e;
+      }
+    }
+    // Ordem varia por dia, estável dentro do mesmo dia.
+    final now = DateTime.now();
+    final list = out.values.toList()
+      ..shuffle(Random(now.year * 1000 + now.month * 40 + now.day));
+    return list.take(max).toList();
+  }
+
+  /// Último episódio de série assistido (não adulto), para o lembrete das 22h.
+  MediaItem? get pushLastEpisode {
+    for (final e in [...continueSeries, ...recentOf(MediaKind.series)]) {
+      if (e.url.isNotEmpty && !_isAdultItem(e)) return e;
+    }
+    return null;
+  }
+
+  Future<void> _syncPush() async {
+    final push = PushService.instance;
+    if (!_accounts.isCloud || !isLogged || push.token == null) return;
+    final ep = pushLastEpisode;
+    final profile = <String, dynamic>{
+      'token': push.token,
+      'platform': push.platform,
+      'enabled': pushEnabled,
+      'tz': 'America/Sao_Paulo',
+      'suggestions': [
+        for (final e in pushSuggestions())
+          {'id': e.id, 'title': e.name, 'kind': e.kind.name, 'adult': false},
+      ],
+      'lastSeries': ep == null
+          ? null
+          : {
+              'id': ep.id,
+              'series': ep.group,
+              'title': ep.name,
+              'adult': false,
+            },
+    };
+    final sig = sha256.convert(utf8.encode(jsonEncode(profile))).toString();
+    if (sig == _storage.pushProfileSig) return;
+    try {
+      await _accounts.savePushProfile(
+          {...profile, 'updatedAt': DateTime.now().toIso8601String()});
+      await _storage.savePushProfileSig(sig);
+    } on Object catch (e) {
+      debugPrint('Falha ao gravar perfil de push: $e');
     }
   }
 
@@ -281,6 +404,7 @@ class AppState extends ChangeNotifier {
     _genreSeries = _byGenre(series);
     _recentIds = _recentIds.where(_byId.containsKey).toList();
     _seriesCache.clear();
+    unawaited(_syncPush()); // sugestões dependem do catálogo recém-carregado
   }
 
   /// Distribui os itens nos gêneros que reconhecemos pelo nome da pasta/título.
@@ -481,11 +605,12 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- filtros por gênero (cruzam todas as pastas) ----------
-  Map<String, List<MediaItem>> _genreMapFor(List<MediaItem> items) => items == live
-      ? _genreLive
-      : items == series
-          ? _genreSeries
-          : _genreMovies;
+  Map<String, List<MediaItem>> _genreMapFor(List<MediaItem> items) =>
+      items == live
+          ? _genreLive
+          : items == series
+              ? _genreSeries
+              : _genreMovies;
 
   /// Gêneros com pelo menos um item na aba, na ordem fixa de [Genres.all].
   /// Esconde "+18" quando o controle parental está ocultando conteúdo adulto.
@@ -528,6 +653,25 @@ class AppState extends ChangeNotifier {
   List<MediaItem> get recentItems => [
         for (final id in _recentIds)
           if (_byId[id] != null) _byId[id]!,
+      ];
+
+  // ---------- atalhos por aba (respeitam o filtro adulto) ----------
+  bool _shown(MediaItem e) => !(_filterAdult && Parental.isAdult(e.group));
+
+  List<MediaItem> favoritesOf(MediaKind kind) => [
+        for (final e in favoriteItems)
+          if (e.kind == kind && _shown(e)) e
+      ];
+
+  List<MediaItem> recentOf(MediaKind kind) => [
+        for (final e in recentItems)
+          if (e.kind == kind && _shown(e)) e
+      ];
+
+  /// Episódios com progresso salvo, do mais recente para o mais antigo.
+  List<MediaItem> get continueSeries => [
+        for (final e in continueWatchingItems)
+          if (e.kind == MediaKind.series && _shown(e)) e,
       ];
 
   List<MediaItem> search(String query) {
@@ -590,6 +734,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await _storage.saveRecent(list);
     _recordUsage(item);
+    unawaited(_syncPush());
   }
 
   void _recordUsage(MediaItem item) {
@@ -668,12 +813,12 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- continuar assistindo ----------
-    Map<String, PlaybackProgress> _playbackProgress = {};
+  Map<String, PlaybackProgress> _playbackProgress = {};
 
   Map<String, PlaybackProgress> get playbackProgress =>
       Map<String, PlaybackProgress>.unmodifiable(_playbackProgress);
 
-    PlaybackProgress? getProgress(String itemId) => _playbackProgress[itemId];
+  PlaybackProgress? getProgress(String itemId) => _playbackProgress[itemId];
 
   Future<void> saveProgress(MediaItem item, int posSec, int durSec) async {
     if (item.kind == MediaKind.live || item.url.isEmpty || durSec <= 0) {
@@ -692,14 +837,14 @@ class AppState extends ChangeNotifier {
     );
     await _storage.savePlaybackProgress(progress);
     _playbackProgress =
-      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+        Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
   }
 
   Future<void> clearProgress(String itemId) async {
     await _storage.clearPlaybackProgress(itemId);
     _playbackProgress =
-      Map<String, PlaybackProgress>.from(_storage.playbackProgress);
+        Map<String, PlaybackProgress>.from(_storage.playbackProgress);
     notifyListeners();
   }
 
@@ -724,18 +869,25 @@ class AppState extends ChangeNotifier {
     final e = email.trim();
     if (e.isEmpty || password.isEmpty) return 'Informe e-mail e senha.';
 
+    final lockedMsg = _loginLockMessage();
+    if (lockedMsg != null) return lockedMsg;
+
     if (isMasterEmail(e)) {
       final err = await _accounts.signInMaster(e, password);
+      if (err == kInvalidCredentials) return _loginFailed();
       if (err != null) return err;
+      await _storage.saveLoginFails(0);
       session = const SessionUser(email: kMasterEmail, isMaster: true);
       masterAppMode = false;
       await _remember(remember, kMasterEmail, password);
       notifyListeners();
+      unawaited(_startPush());
       return null;
     }
 
     final user = await _accounts.authenticate(e, password);
-    if (user == null) return 'E-mail ou senha inválidos.';
+    if (user == null) return _loginFailed();
+    await _storage.saveLoginFails(0);
     if (!user.isActive) {
       return 'Conta ${user.status.label.toLowerCase()} ou expirada. Fale com o administrador.';
     }
@@ -745,7 +897,38 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     unawaited(_reportDevice(user));
     await _applyAccountPlaylist(user);
+    unawaited(_startPush());
     return null;
+  }
+
+  // Bloqueio local após tentativas erradas seguidas (o Firebase Auth ainda tem
+  // o próprio limite no servidor). Nada de senha é gravado aqui.
+  static const maxLoginAttempts = 5;
+  static const loginLockDuration = Duration(minutes: 5);
+
+  String? _loginLockMessage() {
+    final until = _storage.loginLockedUntil;
+    if (until == null) return null;
+    final left = until.difference(DateTime.now());
+    if (left <= Duration.zero) return null;
+    final min = (left.inSeconds / 60).ceil();
+    return 'Muitas tentativas incorretas. Tente de novo em $min '
+        '${min == 1 ? 'minuto' : 'minutos'}.';
+  }
+
+  Future<String> _loginFailed() async {
+    final fails = _storage.loginFails + 1;
+    if (fails >= maxLoginAttempts) {
+      await _storage.saveLoginFails(
+        0,
+        lockedUntil: DateTime.now().add(loginLockDuration),
+      );
+      return _loginLockMessage()!;
+    }
+    await _storage.saveLoginFails(fails);
+    final left = maxLoginAttempts - fails;
+    return '$kInvalidCredentials Restam $left '
+        '${left == 1 ? 'tentativa' : 'tentativas'}.';
   }
 
   /// Anota, no perfil da conta, o aparelho e o horário deste acesso.
@@ -808,6 +991,15 @@ class AppState extends ChangeNotifier {
 
   Future<void> logout() async {
     await _storage.clearRememberedLogin();
+    // Aparelho deslogado não recebe mais push desta conta.
+    if (_accounts.isCloud) {
+      try {
+        await _accounts.savePushProfile({'enabled': false, 'token': null});
+        await _storage.savePushProfileSig('');
+      } on Object {
+        // offline: a função descarta tokens inválidos depois
+      }
+    }
     await _accounts.signOut();
     session = null;
     masterAppMode = false;
@@ -832,10 +1024,9 @@ class AppState extends ChangeNotifier {
   List<AdminUser> get adminUsers => _accounts.users;
 
   /// Contas que vencem em até 7 dias, mais próximas do vencimento primeiro.
-  List<AdminUser> get expiringSoonUsers => adminUsers
-      .where((u) => u.isExpiringSoon)
-      .toList()
-    ..sort((a, b) => (a.daysLeft ?? 0).compareTo(b.daysLeft ?? 0));
+  List<AdminUser> get expiringSoonUsers =>
+      adminUsers.where((u) => u.isExpiringSoon).toList()
+        ..sort((a, b) => (a.daysLeft ?? 0).compareTo(b.daysLeft ?? 0));
 
   /// Contas já vencidas (login bloqueado até o master renovar).
   List<AdminUser> get expiredUsers =>
