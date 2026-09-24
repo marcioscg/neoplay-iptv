@@ -1,12 +1,20 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import '../models/models.dart';
 import 'storage.dart';
 
-/// Credencial master fixa do app. Sempre abre o painel de controle.
+/// E-mail da conta master. Sempre abre o painel de controle.
+///
+/// A senha não fica no código: no Firebase ela vive só no Auth; no modo local
+/// o primeiro acesso master define a senha do aparelho (guardada como hash).
 const kMasterEmail = 'marcioscg@hotmail.com';
-const kMasterPassword = '27062015EmillY';
 
-bool isMasterCredential(String email, String password) =>
-    email.trim().toLowerCase() == kMasterEmail && password == kMasterPassword;
+bool isMasterEmail(String email) => email.trim().toLowerCase() == kMasterEmail;
+
+String hashPassword(String password) =>
+    sha256.convert(utf8.encode(password)).toString();
 
 /// Contrato de persistência de contas e telemetria de uso.
 ///
@@ -26,6 +34,10 @@ abstract class AccountsRepository {
   /// Garante que a conta master esteja autenticada no backend. Retorna `null`
   /// em caso de sucesso ou uma mensagem de erro.
   Future<String?> signInMaster(String email, String password);
+
+  /// `true` quando as contas estão no backend (Firebase); `false` no modo
+  /// local, em que nada sincroniza entre aparelhos.
+  bool get isCloud;
 
   Future<void> signOut();
 
@@ -84,7 +96,18 @@ class LocalAccountsRepository implements AccountsRepository {
   }
 
   @override
-  Future<String?> signInMaster(String email, String password) async => null;
+  Future<String?> signInMaster(String email, String password) async {
+    final hash = hashPassword(password);
+    final stored = _storage.masterPasswordHash;
+    if (stored == null || stored.isEmpty) {
+      await _storage.saveMasterPasswordHash(hash);
+      return null;
+    }
+    return stored == hash ? null : 'E-mail ou senha inválidos.';
+  }
+
+  @override
+  bool get isCloud => false;
 
   @override
   Future<void> signOut() async {}

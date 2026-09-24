@@ -34,7 +34,9 @@ service cloud.firestore {
 
     // Telemetria de uso.
     match /usage_events/{eventId} {
-      allow create: if request.auth != null;      // qualquer conta registra
+      // qualquer conta registra, mas só em nome próprio
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
       allow read, list, delete: if isMaster();     // só o master consulta/limpa
       allow update: if false;
     }

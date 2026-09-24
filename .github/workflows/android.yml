@@ -62,7 +62,7 @@ jobs:
             echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > android/app/google-services.json
             echo "google-services.json restaurado do secret."
           else
-            echo "Secret GOOGLE_SERVICES_JSON_BASE64 ausente: usando placeholder (Firebase fica off no APK)."
+            echo "::warning::Secret GOOGLE_SERVICES_JSON_BASE64 ausente: APK SEM Firebase (modo local, contas não sincronizam)."
             cat > android/app/google-services.json <<'EOF'
           {
             "project_info": { "project_number": "000000000000", "project_id": "placeholder" },

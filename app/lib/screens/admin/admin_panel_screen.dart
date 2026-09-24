@@ -46,12 +46,28 @@ class AdminPanelScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: TabBarView(
+        body: Column(
           children: [
-            _AccountsTab(state: state),
-            const UsageDashboard(),
-            const PaymentsTab(),
-            const BillingTab(),
+            // Build sem google-services.json real: nada vai para o Firebase.
+            if (!state.isCloud)
+              const MaterialBanner(
+                leading: Icon(Icons.cloud_off),
+                content: Text(
+                  'Modo local: Firebase desconectado. Contas e uso ficam só '
+                  'neste aparelho e não funcionam em outros celulares.',
+                ),
+                actions: [SizedBox.shrink()],
+              ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _AccountsTab(state: state),
+                  const UsageDashboard(),
+                  const PaymentsTab(),
+                  const BillingTab(),
+                ],
+              ),
+            ),
           ],
         ),
       ),

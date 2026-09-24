@@ -724,7 +724,7 @@ class AppState extends ChangeNotifier {
     final e = email.trim();
     if (e.isEmpty || password.isEmpty) return 'Informe e-mail e senha.';
 
-    if (isMasterCredential(e, password)) {
+    if (isMasterEmail(e)) {
       final err = await _accounts.signInMaster(e, password);
       if (err != null) return err;
       session = const SessionUser(email: kMasterEmail, isMaster: true);
@@ -775,7 +775,7 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    if (isMasterCredential(e, p)) {
+    if (isMasterEmail(e)) {
       final err = await _accounts.signInMaster(e, p);
       if (err == null) {
         session = const SessionUser(email: kMasterEmail, isMaster: true);
@@ -826,6 +826,9 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- contas (painel de controle) ----------
+  /// Contas sincronizadas no Firebase? `false` = modo local (só este aparelho).
+  bool get isCloud => _accounts.isCloud;
+
   List<AdminUser> get adminUsers => _accounts.users;
 
   /// Contas que vencem em até 7 dias, mais próximas do vencimento primeiro.

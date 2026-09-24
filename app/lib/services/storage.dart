@@ -28,6 +28,7 @@ class Storage {
   static const _kProgress = 'playback_progress';
   static const _kThemeChoice = 'theme_choice';
   static const _kPricing = 'plan_pricing';
+  static const _kMasterHash = 'master_hash';
 
   // Chaves da versão 1.0.0, removidas na migração.
   static const _kLegacyLive = 'cache_live';
@@ -127,6 +128,13 @@ class Storage {
       await _p.setString(_kParentalPin, pin);
     }
   }
+
+  // ---------- senha master (modo local) ----------
+  /// SHA-256 da senha master deste aparelho, definida no primeiro acesso.
+  String? get masterPasswordHash => _p.getString(_kMasterHash);
+
+  Future<void> saveMasterPasswordHash(String hash) =>
+      _p.setString(_kMasterHash, hash);
 
   bool get parentalEnabled => _p.getBool(_kParentalEnabled) ?? false;
 

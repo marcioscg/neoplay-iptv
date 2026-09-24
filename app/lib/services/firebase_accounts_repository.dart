@@ -100,26 +100,28 @@ class FirebaseAccountsRepository implements AccountsRepository {
 
   @override
   Future<String?> signInMaster(String email, String password) async {
+    // A conta master precisa existir no Firebase Auth (criada pelo console).
+    // Não criamos aqui: quem entrasse primeiro com o e-mail viraria master.
     try {
-      try {
-        await _auth.signInWithEmailAndPassword(
-            email: email.trim(), password: password);
-      } on FirebaseAuthException catch (e) {
-        if (e.code == 'user-not-found' ||
-            e.code == 'invalid-credential' ||
-            e.code == 'wrong-password') {
-          await _auth.createUserWithEmailAndPassword(
-              email: email.trim(), password: password);
-        } else {
-          rethrow;
-        }
-      }
+      await _auth.signInWithEmailAndPassword(
+          email: email.trim(), password: password);
       _attachListeners();
       return null;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'user-not-found' ||
+          e.code == 'invalid-credential' ||
+          e.code == 'wrong-password' ||
+          e.code == 'invalid-email') {
+        return 'E-mail ou senha inválidos.';
+      }
+      return 'Não foi possível entrar no Firebase: ${e.message ?? e.code}';
     } on FirebaseException catch (e) {
       return 'Não foi possível entrar no Firebase: ${e.message ?? e.code}';
     }
   }
+
+  @override
+  bool get isCloud => true;
 
   @override
   Future<void> signOut() async {
